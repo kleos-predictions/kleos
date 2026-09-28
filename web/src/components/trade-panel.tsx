@@ -3,29 +3,33 @@
 import { useState } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
-import { useAccount, useReadContract, useWriteContract, usePublicClient } from "wagmi";
-import { parseUnits } from "viem";
+import { useReadContract } from "wagmi";
+import { maxUint256, parseUnits } from "viem";
 import { DEMO_R, pools, type Market } from "@/lib/data";
 import { PARAMS, effectiveBet, multiplier, payout } from "@/lib/math";
-import { IS_LIVE, KLEOS_ADDRESS, USD_ADDRESS, txUrl } from "@/lib/chain";
+import { IS_LIVE, IS_LOCAL_CHAIN, KLEOS_ADDRESS, USD_ADDRESS, chain, publicClient, txUrl } from "@/lib/chain";
+import { describeAccountError } from "@/lib/mera";
+import { PROMPT_FREE_LIMIT, useKleosAccount } from "./account";
 import { kleosAbi, kleosUsdAbi } from "@/lib/abi";
 import { tierOf, TIER_NAMES, TIER_THRESHOLDS } from "@/lib/tiers";
 import { BoostGauge } from "./boost-gauge";
 import { LaurelBadge } from "./laurel";
 
 const CHIPS = [10, 50, 100];
+const clock = () => performance.now();
 const money = (n: number) => `$${n.toLocaleString("en-US", { maximumFractionDigits: 0 })}`;
 
 export function TradePanel({ market }: { market: Market }) {
   const params = useSearchParams();
   const [side, setSide] = useState<boolean>(params.get("side") !== "no");
   const [amount, setAmount] = useState(80);
+  const [call, setCall] = useState("");
   const [sheetOpen, setSheetOpen] = useState(params.has("side"));
   const [status, setStatus] = useState<{ msg: string; tx?: string } | null>(null);
 
-  const { address, isConnected } = useAccount();
-  const publicClient = usePublicClient();
-  const { writeContractAsync, isPending } = useWriteContract();
+  const account = useKleosAccount();
+  const address = account.address;
+  const [busy, setBusy] = useState(false);
   const { data: rep } = useReadContract({
     address: KLEOS_ADDRESS,
     abi: kleosAbi,
@@ -47,32 +51,67 @@ export function TradePanel({ market }: { market: Market }) {
   const next = TIER_THRESHOLDS[tier];
   const open = market.status === "live" || market.status === "closing";
 
+  const needsPrompt = amount > PROMPT_FREE_LIMIT;
+  const callBytes = new TextEncoder().encode(call.trim()).length;
+  const cta = !open
+    ? "Market closed"
+    : busy
+      ? "Placing bet…"
+      : !IS_LIVE
+        ? `Place bet · ${side ? "Yes" : "No"}`
+        : account.status === "none"
+          ? `Start with passkey · bet ${side ? "Yes" : "No"}`
+          : account.status === "locked"
+            ? `Unlock & bet ${side ? "Yes" : "No"}`
+            : needsPrompt
+              ? `Confirm with passkey · ${side ? "Yes" : "No"}`
+              : `Place bet · ${side ? "Yes" : "No"}`;
+
   async function placeBet() {
     if (!IS_LIVE) {
       setStatus({ msg: `Demo mode: ${money(amount)} on ${side ? "YES" : "NO"} would count as ${money(eff)}` });
       return;
     }
-    if (!isConnected || !address) return setStatus({ msg: "Connect a wallet first" });
+    const started = clock();
+    // The passkey prompt, when one is needed, has to be the first await in this click handler.
+    const client = await account.authorize({ fresh: needsPrompt });
+    if (!client?.account) return;
+    setBusy(true);
     try {
+      const me = client.account;
+      if (account.funding) setStatus({ msg: "Setting up your account…" });
+      await account.whenFunded();
+
       const value = parseUnits(String(amount), 6);
-      const allowance = await publicClient!.readContract({
-        address: USD_ADDRESS!, abi: kleosUsdAbi, functionName: "allowance", args: [address, KLEOS_ADDRESS!],
-      });
-      if (allowance < value) {
-        setStatus({ msg: "Approving test USD…" });
-        const approveTx = await writeContractAsync({
-          address: USD_ADDRESS!, abi: kleosUsdAbi, functionName: "approve", args: [KLEOS_ADDRESS!, value * 1000n],
+      const [allowance, trustedMarket] = await Promise.all([
+        publicClient.readContract({ address: USD_ADDRESS!, abi: kleosUsdAbi, functionName: "allowance", args: [me.address, KLEOS_ADDRESS!] }),
+        publicClient.readContract({ address: USD_ADDRESS!, abi: kleosUsdAbi, functionName: "market" }),
+      ]);
+      // kUSD trusts the Kleos market, so the first bet is a single transaction.
+      if (trustedMarket.toLowerCase() !== KLEOS_ADDRESS!.toLowerCase() && allowance < value) {
+        setStatus({ msg: "Enabling test USD…" });
+        const approveTx = await client.writeContract({
+          account: me, chain, address: USD_ADDRESS!, abi: kleosUsdAbi, functionName: "approve", args: [KLEOS_ADDRESS!, maxUint256],
         });
-        await publicClient!.waitForTransactionReceipt({ hash: approveTx });
+        await publicClient.waitForTransactionReceipt({ hash: approveTx });
       }
       setStatus({ msg: "Placing bet…" });
-      const tx = await writeContractAsync({
-        address: KLEOS_ADDRESS!, abi: kleosAbi, functionName: "bet", args: [BigInt(market.id), side, value],
-      });
-      await publicClient!.waitForTransactionReceipt({ hash: tx });
-      setStatus({ msg: "Bet placed", tx });
+      const text = call.trim();
+      const tx = text
+        ? await client.writeContract({
+            account: me, chain, address: KLEOS_ADDRESS!, abi: kleosAbi, functionName: "betWithCall", args: [BigInt(market.id), side, value, text],
+          })
+        : await client.writeContract({
+            account: me, chain, address: KLEOS_ADDRESS!, abi: kleosAbi, functionName: "bet", args: [BigInt(market.id), side, value],
+          });
+      await publicClient.waitForTransactionReceipt({ hash: tx });
+      const secs = ((clock() - started) / 1000).toFixed(1);
+      setStatus({ msg: `Bet confirmed on Monad in ${secs}s`, tx });
+      setCall("");
     } catch (e) {
-      setStatus({ msg: (e as Error).message.split("\n")[0] });
+      setStatus({ msg: describeAccountError(e) });
+    } finally {
+      setBusy(false);
     }
   }
 
@@ -86,7 +125,7 @@ export function TradePanel({ market }: { market: Market }) {
               role="radio"
               aria-checked={side === s}
               onClick={() => setSide(s)}
-              className={`btn ${side === s ? (s ? "btn-yes" : "border-ink bg-ink text-ground") : "btn-no text-muted"}`}
+              className={`btn ${side === s ? (s ? "btn-yes" : "btn-no-active") : "btn-no text-muted"}`}
             >
               {s ? "Yes" : "No"} {Math.round((s ? market.repYes : 1 - market.repYes) * 100)}%
             </button>
@@ -115,6 +154,19 @@ export function TradePanel({ market }: { market: Market }) {
           ))}
         </div>
 
+        <label className="flex flex-col gap-2">
+          <span className="flex justify-between">
+            <span className="lbl">Your call · optional</span>
+            <span className={`lbl ${callBytes > 140 ? "!text-accent" : ""}`}>{callBytes}/140</span>
+          </span>
+          <input
+            value={call}
+            onChange={(e) => setCall(e.target.value)}
+            placeholder="Why? One line, public and permanent"
+            className="rounded-[12px] border border-line bg-ground px-4 py-3 text-[15px] text-ink outline-none placeholder:text-muted focus:border-line-strong"
+          />
+        </label>
+
         <div className="flex items-center gap-5 rounded-[12px] bg-card-alt p-4">
           <BoostGauge mult={mult} size={116} />
           <div className="flex flex-col gap-1">
@@ -132,13 +184,18 @@ export function TradePanel({ market }: { market: Market }) {
           <span className="lbl !text-[11px]">Source: {market.oracle}</span>
         </div>
 
-        <button className="btn btn-yes w-full !min-h-14 !text-base" onClick={placeBet} disabled={!open || amount < 1 || isPending}>
-          {!open ? "Market closed" : isPending ? "Confirm in wallet…" : `Place bet · ${side ? "Yes" : "No"}`}
+        <button className={`btn ${side ? "btn-yes" : "btn-no-active"} w-full !min-h-14 !text-base`} onClick={placeBet} disabled={!open || amount < 1 || busy || callBytes > 140}>
+          {cta}
         </button>
+        {IS_LIVE && account.status === "unlocked" && (
+          <p className="lbl !text-[11px]">
+            {needsPrompt ? `Bets over $${PROMPT_FREE_LIMIT} ask for your passkey` : `No prompt for bets up to $${PROMPT_FREE_LIMIT} while unlocked`}
+          </p>
+        )}
         {status && (
           <p role="status" className="lbl !text-ink">
             {status.msg}
-            {status.tx && (
+            {status.tx && !IS_LOCAL_CHAIN && (
               <>
                 {" · "}
                 <a href={txUrl(status.tx)} target="_blank" rel="noreferrer" className="text-accent underline">

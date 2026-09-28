@@ -39,6 +39,7 @@ contract Kleos {
     uint256 public constant BOOST_CAP = 0.1e18; // an address's boost stops at 10% of the effective pool
     uint256 public constant BOOST_CAP_MIN_POOL = 5_000e6; // cap applies once the pool is this deep
     uint256 public constant MIN_BET = 1e6;
+    uint256 public constant MAX_CALL_BYTES = 140; // a call: the public one-line reason behind a bet
     uint256 public constant BOND = 10e6; // resolution bond
     uint256 public constant FEE_BPS = 200; // 2% of the losing pool funds the market's bonus
     uint256 public constant DELTA_R_MAX = 0.8e18; // max reputation gain from a single market (blunts long-shot windfalls)
@@ -163,6 +164,9 @@ contract Kleos {
         uint256 priceMoneyYes
     );
     event Sponsored(uint256 indexed marketId, address indexed sponsor, uint256 amount);
+    /// @dev Public and permanent. Emitted only (never stored) to keep it cheap; timestamped before
+    ///      the outcome, so after resolution it becomes a receipt.
+    event CallPosted(uint256 indexed marketId, address indexed user, bool side, uint256 amount, uint256 entryPrice, string text);
     event OutcomeProposed(uint256 indexed marketId, address indexed proposer, bool outcome, bytes32 evidenceHash, string evidenceURI);
     event OutcomeDisputed(uint256 indexed marketId, address indexed disputer);
     event MarketResolved(uint256 indexed marketId, bool outcome, uint256 fee);
@@ -207,6 +211,7 @@ contract Kleos {
     error NotEligibleJuror();
     error NotJuror();
     error BadVote();
+    error CallTooLong();
     error NothingToVest();
     error StillVesting();
     error UnderReview();
@@ -339,13 +344,24 @@ contract Kleos {
 
     // ─── Trading ───────────────────────────────────────────────────────────────
     function bet(uint256 id, bool yes, uint256 amount) external {
+        _bet(id, yes, amount);
+    }
+
+    /// @notice A bet with a call: a public, permanent one-liner saying why (max 140 bytes).
+    function betWithCall(uint256 id, bool yes, uint256 amount, string calldata text) external {
+        if (bytes(text).length > MAX_CALL_BYTES) revert CallTooLong();
+        uint256 entryPrice = _bet(id, yes, amount);
+        if (bytes(text).length > 0) emit CallPosted(id, msg.sender, yes, amount, entryPrice, text);
+    }
+
+    function _bet(uint256 id, bool yes, uint256 amount) internal returns (uint256 entryPrice) {
         Market storage m = _markets[id];
         if (m.state != State.Open || block.timestamp >= m.closeTime) revert MarketClosed();
         if (amount < MIN_BET) revert BetTooSmall();
         _pull(msg.sender, amount);
 
         (uint256 repYes,) = prices(id);
-        uint256 entryPrice = yes ? repYes : WAD - repYes;
+        entryPrice = yes ? repYes : WAD - repYes;
         (uint256 eff, uint256 mult) = quote(id, msg.sender, amount);
 
         Position storage pos = positions[id][msg.sender][yes];

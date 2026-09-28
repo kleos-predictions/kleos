@@ -41,6 +41,8 @@ export type RepChange = {
   newR: number;
   tx: string;
   date: string;
+  timestamp: number; // seconds
+  isBet?: boolean; // false for demo seeds and jury duty
 };
 
 export type Trader = { address: string; r: number; wins: number; losses: number };
@@ -257,7 +259,11 @@ export function reputationHistory(trader: Trader, count = 14): RepChange[] {
       amount,
       delta: reputationDelta(won, entryPrice, amount),
       tx: fakeTx(hashString(trader.address) + i),
-      date: `Sep ${27 - i}`,
+      ...(() => {
+        // Roughly one resolved market a week, going back from Sep 27, 2026.
+        const ts = Date.UTC(2026, 8, 27) / 1000 - i * 8 * 86_400;
+        return { timestamp: ts, date: new Date(ts * 1000).toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "UTC" }) };
+      })(),
     });
   }
   // Walk backwards from today's R so each row's newR is consistent with its delta.
@@ -286,3 +292,31 @@ export function pools(m: Market) {
 
 /** Reputation used for the connected wallet in demo mode (R = 16 → 3× boost). */
 export const DEMO_R = 16;
+
+export type Call = { address: string; r: number; side: boolean; amount: number; entryPrice: number; text: string; ago: string };
+
+const SAMPLE_CALLS: Record<number, string[]> = {
+  1: ["ETF inflows haven't slowed in six weeks", "Halving supply shock is priced in already", "Funding rates say leverage is too crowded"],
+  2: ["Testnet already peaks above 8M on busy days", "Mainnet launches later than people think"],
+  3: ["Home side is unbeaten at home since March", "Their striker is out, check the injury report"],
+  4: ["No catalyst before year end", "Staking ETF approval changes everything"],
+  5: ["Registrations passed 600 last week"],
+  6: ["The gap to #1 closed to 8 points this month", "Leaderboard lags new releases by weeks"],
+};
+
+/** Sample calls for demo mode. Live calls come from CallPosted events. */
+export function sampleCalls(marketId: number): Call[] {
+  const r = rng(marketId * 53);
+  return (SAMPLE_CALLS[marketId] ?? []).map((text, i) => {
+    const trader = TRADERS[Math.floor(r() * TRADERS.length)];
+    return {
+      address: trader.address,
+      r: trader.r,
+      side: r() > 0.4,
+      amount: [25, 50, 80, 120][Math.floor(r() * 4)],
+      entryPrice: Math.round((0.2 + r() * 0.6) * 100) / 100,
+      text,
+      ago: ["3m", "41m", "2h", "5h"][i] ?? "1d",
+    };
+  });
+}

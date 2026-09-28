@@ -321,7 +321,29 @@ describe("markets and resolution", () => {
   });
 });
 
+describe("calls", () => {
+  it("posts a public call with the bet, capped at 140 bytes", async () => {
+    const { kleos, wallets } = await deploy();
+    const u = wallets[4];
+    const hash = await kleos.write.betWithCall([1n, true, usd(20), "ETF flows are accelerating"], { account: u.account });
+    const receipt = await (await viem.getPublicClient()).waitForTransactionReceipt({ hash });
+    const events = await kleos.getEvents.CallPosted({}, { blockHash: receipt.blockHash });
+    assert.equal(events[0].args.text, "ETF flows are accelerating");
+    assert.equal((await kleos.read.positions([1n, u.account.address, true]))[0], usd(20), "the bet itself went through");
+    await assert.rejects(kleos.write.betWithCall([1n, true, usd(1), "x".repeat(141)], { account: u.account }), /CallTooLong/);
+  });
+});
+
 describe("KleosUSD", () => {
+  it("lets the Kleos market take a bet without a separate approval", async () => {
+    const { token, kleos, wallets } = await deploy();
+    const fresh = wallets[7];
+    await token.write.approve([kleos.address, 0n], { account: fresh.account });
+    await assert.rejects(kleos.write.bet([1n, true, usd(10)], { account: fresh.account }));
+    await token.write.setMarket([kleos.address]);
+    await kleos.write.bet([1n, true, usd(10)], { account: fresh.account });
+  });
+
   it("only the sponsor can top up accounts, within the limit", async () => {
     const { token, wallets } = await deploy();
     const fresh = wallets[5].account.address;

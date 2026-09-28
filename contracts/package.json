@@ -10,7 +10,9 @@
     "test": "hardhat test nodejs",
     "compile": "hardhat compile",
     "deploy:monad": "hardhat ignition deploy ignition/modules/Kleos.ts --network monadTestnet",
-    "abi": "node scripts/export-abi.mjs"
+    "abi": "node scripts/export-abi.mjs",
+    "node": "hardhat node",
+    "deploy:local": "hardhat ignition deploy ignition/modules/Kleos.ts --network localhost"
   },
   "keywords": [],
   "author": "",

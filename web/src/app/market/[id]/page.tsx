@@ -1,8 +1,10 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { Suspense } from "react";
-import { getMarket, recentBets, MARKETS } from "@/lib/data";
-import { shortAddress } from "@/lib/chain";
+import { getMarket, recentBets, sampleCalls, MARKETS, type Call } from "@/lib/data";
+import { IS_LIVE, shortAddress } from "@/lib/chain";
+import { readCalls } from "@/lib/onchain";
+import { CallsList } from "@/components/calls-list";
 import { OddsDisplay } from "@/components/odds-display";
 import { DottedLineChart } from "@/components/dotted-line-chart";
 import { ResolutionTrack } from "@/components/resolution-track";
@@ -11,15 +13,13 @@ import { TradePanel } from "@/components/trade-panel";
 import { LaurelBadge } from "@/components/laurel";
 import { SharpSignal } from "@/components/sharp-signal";
 
-export function generateStaticParams() {
-  return MARKETS.map((m) => ({ id: String(m.id) }));
-}
-
 export default async function MarketPage(props: PageProps<"/market/[id]">) {
   const { id } = await props.params;
   const market = getMarket(Number(id));
   if (!market) notFound();
   const bets = recentBets(market.id);
+  let calls: Call[] = sampleCalls(market.id);
+  if (IS_LIVE) calls = await readCalls(market.id).catch(() => []);
   const index = MARKETS.indexOf(market);
 
   return (
@@ -60,6 +60,8 @@ export default async function MarketPage(props: PageProps<"/market/[id]">) {
         </section>
 
         <SharpSignal {...market.sharps} />
+
+        <CallsList calls={calls} />
 
         <section className="card flex flex-col gap-6 p-6">
           <div className="flex items-center justify-between">
