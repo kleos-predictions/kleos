@@ -1,0 +1,136 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Kleos markets</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link href="https://fonts.googleapis.com/css2?family=Doto:wght@500;700;900&amp;family=IBM+Plex+Mono:wght@400;500&amp;family=Space+Grotesk:wght@400;500;700&amp;display=swap" rel="stylesheet">
+<style>
+body{margin:0;background:#0D0C0B}
+a{color:#F3EFE9;text-decoration:none}a:hover{color:#FF7A5C}
+.dot{font-family:'Doto','IBM Plex Mono',monospace}
+.mono{font-family:'IBM Plex Mono',ui-monospace,monospace}
+.lbl{font-family:'IBM Plex Mono',ui-monospace,monospace;font-size:12px;letter-spacing:0.08em;color:#9A948C;text-transform:uppercase}
+.card{background:#161413;border:1px solid #2A2724;border-radius:18px;box-sizing:border-box}
+.btn{font-family:'IBM Plex Mono',ui-monospace,monospace;font-size:14px;letter-spacing:0.08em;height:48px;border-radius:12px;cursor:pointer;box-sizing:border-box}
+</style>
+</helmet>
+<div style="width: 1440px; height: 1024px; box-sizing: border-box; background: #0D0C0B; color: #F3EFE9; font-family: 'Space Grotesk', system-ui, sans-serif; display: flex; flex-direction: column">
+
+<nav style="height: 76px; box-sizing: border-box; padding: 0 48px; border-bottom: 1px solid #2A2724; display: flex; align-items: center; gap: 40px">
+<a href="Main.dc.html" style="display: flex; align-items: center; gap: 12px">
+<svg width="30" height="30" viewBox="0 0 64 64" aria-hidden="true"><g fill="{{accent}}"><circle cx="28" cy="57" r="2.4"></circle><circle cx="21" cy="53" r="2.4"></circle><circle cx="16" cy="47" r="2.4"></circle><circle cx="13" cy="40" r="2.4"></circle><circle cx="12" cy="32" r="2.4"></circle><circle cx="13" cy="24" r="2.4"></circle><circle cx="16" cy="17" r="2.4"></circle><circle cx="21" cy="59" r="3"></circle><circle cx="13" cy="55" r="3"></circle><circle cx="8" cy="49" r="3"></circle><circle cx="5" cy="41" r="3"></circle><circle cx="5" cy="32" r="3"></circle><circle cx="6" cy="23" r="3"></circle><circle cx="10" cy="15" r="3"></circle><circle cx="36" cy="57" r="2.4"></circle><circle cx="43" cy="53" r="2.4"></circle><circle cx="48" cy="47" r="2.4"></circle><circle cx="51" cy="40" r="2.4"></circle><circle cx="52" cy="32" r="2.4"></circle><circle cx="51" cy="24" r="2.4"></circle><circle cx="48" cy="17" r="2.4"></circle><circle cx="43" cy="59" r="3"></circle><circle cx="51" cy="55" r="3"></circle><circle cx="56" cy="49" r="3"></circle><circle cx="59" cy="41" r="3"></circle><circle cx="59" cy="32" r="3"></circle><circle cx="58" cy="23" r="3"></circle><circle cx="54" cy="15" r="3"></circle></g></svg>
+<span class="dot" style="font-size: 28px; font-weight: 900; letter-spacing: 0.14em">KLEOS</span>
+</a>
+<div style="display: flex; gap: 28px">
+<a class="mono" href="Main.dc.html" style="font-size: 14px; letter-spacing: 0.06em; color: #F3EFE9">MARKETS</a>
+<a class="mono" href="#" style="font-size: 14px; letter-spacing: 0.06em; color: #9A948C">LEADERBOARD</a>
+<a class="mono" href="#" style="font-size: 14px; letter-spacing: 0.06em; color: #9A948C">PROFILE</a>
+</div>
+<label style="flex-grow: 1; display: flex; align-items: center; gap: 10px; height: 44px; padding: 0 16px; background: #161413; border: 1px solid #2A2724; border-radius: 12px; box-sizing: border-box">
+<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#9A948C" stroke-width="2" aria-hidden="true"><circle cx="11" cy="11" r="7"></circle><path d="M20 20l-4-4"></path></svg>
+<input aria-label="Search markets" placeholder="Search markets" style="flex-grow: 1; background: transparent; border: none; outline: none; color: #F3EFE9; font-family: 'IBM Plex Mono', monospace; font-size: 14px">
+</label>
+<button class="btn" style="height: 44px; padding: 0 18px; background: transparent; color: #F3EFE9; border: 1px solid #3A3531">GET TEST USD</button>
+<button class="btn" style="height: 44px; padding: 0 16px; background: #161413; color: #F3EFE9; border: 1px solid #2A2724; display: flex; align-items: center; gap: 10px">
+<svg width="20" height="20" viewBox="0 0 64 64" aria-hidden="true"><g fill="{{accent}}"><circle cx="21" cy="59" r="4"></circle><circle cx="8" cy="49" r="4"></circle><circle cx="5" cy="32" r="4"></circle><circle cx="43" cy="59" r="4"></circle><circle cx="56" cy="49" r="4"></circle><circle cx="59" cy="32" r="4"></circle></g><g fill="#3B2D27"><circle cx="10" cy="15" r="4"></circle><circle cx="54" cy="15" r="4"></circle></g></svg>
+0x3f…9a2c
+</button>
+</nav>
+
+<main style="flex-grow: 1; box-sizing: border-box; padding: 40px 48px 48px; display: flex; flex-direction: column; gap: 28px">
+<div style="display: flex; justify-content: space-between; align-items: flex-end; gap: 40px">
+<h1 class="dot" style="margin: 0; font-size: 46px; line-height: 1.08; font-weight: 900; letter-spacing: 0.02em; max-width: 980px">YOUR TRACK RECORD IS WORTH MORE THAN THEIR BANKROLL<span style="color: {{accent}}">_</span></h1>
+<div class="lbl" style="display: flex; align-items: center; gap: 8px; padding-bottom: 8px"><span style="width: 8px; height: 8px; border-radius: 50%; background: {{accent}}"></span>Monad testnet · all systems operational</div>
+</div>
+
+<div style="display: flex; justify-content: space-between; align-items: center">
+<div style="display: flex; gap: 8px">
+<button class="btn" style="height: 40px; padding: 0 16px; background: #F3EFE9; color: #0D0C0B; border: 1px solid #F3EFE9">ALL</button>
+<button class="btn" style="height: 40px; padding: 0 16px; background: transparent; color: #9A948C; border: 1px solid #2A2724">CRYPTO</button>
+<button class="btn" style="height: 40px; padding: 0 16px; background: transparent; color: #9A948C; border: 1px solid #2A2724">SPORTS</button>
+<button class="btn" style="height: 40px; padding: 0 16px; background: transparent; color: #9A948C; border: 1px solid #2A2724">TECH</button>
+<button class="btn" style="height: 40px; padding: 0 16px; background: transparent; color: #9A948C; border: 1px solid #2A2724">CULTURE</button>
+</div>
+<span class="lbl">Sort · trending</span>
+</div>
+
+<div style="display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 24px; flex-grow: 1">
+
+<article class="card" style="padding: 24px; display: flex; flex-direction: column; justify-content: space-between">
+<div style="display: flex; justify-content: space-between"><span class="lbl"><span style="color: #F3EFE9">01</span>  Crypto</span><span class="lbl" style="color: {{accent}}; display: flex; align-items: center; gap: 6px"><span style="width: 6px; height: 6px; border-radius: 50%; background: {{accent}}"></span>Live</span></div>
+<a href="Market.dc.html" style="font-size: 21px; font-weight: 500; line-height: 1.3">BTC closes above $120K on Oct 31?</a>
+<div style="display: flex; justify-content: space-between; align-items: flex-end">
+<div style="display: flex; flex-direction: column; gap: 4px"><span class="dot" style="font-size: 64px; font-weight: 900; line-height: 1; color: {{accent}}">64%</span><span class="lbl">Yes · reputation</span></div>
+<svg width="150" height="64" viewBox="0 0 150 64" aria-hidden="true"><path d="M4 50 C30 44 40 30 60 34 S95 18 110 20 S140 8 146 6" fill="none" stroke="{{accent}}" stroke-width="4" stroke-linecap="round" stroke-dasharray="0 9"></path><path d="M4 40 C30 42 45 38 65 44 S100 36 120 38 S140 34 146 34" fill="none" stroke="#5E5A96" stroke-width="3" stroke-linecap="round" stroke-dasharray="0 9"></path></svg>
+</div>
+<div style="display: flex; gap: 12px"><button class="btn" style="flex-grow: 1; background: {{accent}}; color: #0D0C0B; border: 1px solid {{accent}}; font-weight: 500">YES</button><button class="btn" style="flex-grow: 1; background: transparent; color: #F3EFE9; border: 1px solid #3A3531">NO</button></div>
+</article>
+
+<article class="card" style="padding: 24px; display: flex; flex-direction: column; justify-content: space-between">
+<div style="display: flex; justify-content: space-between"><span class="lbl"><span style="color: #F3EFE9">02</span>  Tech</span><span class="lbl" style="color: {{accent}}; display: flex; align-items: center; gap: 6px"><span style="width: 6px; height: 6px; border-radius: 50%; background: {{accent}}"></span>Live</span></div>
+<a href="Market.dc.html" style="font-size: 21px; font-weight: 500; line-height: 1.3">Monad mainnet passes 10M daily transactions by December?</a>
+<div style="display: flex; justify-content: space-between; align-items: flex-end">
+<div style="display: flex; flex-direction: column; gap: 4px"><span class="dot" style="font-size: 64px; font-weight: 900; line-height: 1; color: {{accent}}">38%</span><span class="lbl">Yes · reputation</span></div>
+<svg width="150" height="64" viewBox="0 0 150 64" aria-hidden="true"><path d="M4 20 C30 26 40 40 60 36 S95 46 110 42 S140 40 146 40" fill="none" stroke="{{accent}}" stroke-width="4" stroke-linecap="round" stroke-dasharray="0 9"></path><path d="M4 34 C30 30 45 32 65 28 S100 30 120 26 S140 28 146 28" fill="none" stroke="#5E5A96" stroke-width="3" stroke-linecap="round" stroke-dasharray="0 9"></path></svg>
+</div>
+<div style="display: flex; gap: 12px"><button class="btn" style="flex-grow: 1; background: {{accent}}; color: #0D0C0B; border: 1px solid {{accent}}; font-weight: 500">YES</button><button class="btn" style="flex-grow: 1; background: transparent; color: #F3EFE9; border: 1px solid #3A3531">NO</button></div>
+</article>
+
+<article class="card" style="padding: 24px; display: flex; flex-direction: column; justify-content: space-between">
+<div style="display: flex; justify-content: space-between"><span class="lbl"><span style="color: #F3EFE9">03</span>  Sports</span><span class="lbl" style="color: #F3EFE9; padding: 2px 8px; border: 1px solid {{accent}}; border-radius: 999px">Closing soon</span></div>
+<a href="Market.dc.html" style="font-size: 21px; font-weight: 500; line-height: 1.3">Home side wins Sunday's derby?</a>
+<div style="display: flex; justify-content: space-between; align-items: flex-end">
+<div style="display: flex; flex-direction: column; gap: 4px"><span class="dot" style="font-size: 64px; font-weight: 900; line-height: 1; color: {{accent}}">71%</span><span class="lbl">Yes · reputation</span></div>
+<svg width="150" height="64" viewBox="0 0 150 64" aria-hidden="true"><path d="M4 44 C30 40 40 36 60 30 S95 22 110 16 S140 14 146 12" fill="none" stroke="{{accent}}" stroke-width="4" stroke-linecap="round" stroke-dasharray="0 9"></path><path d="M4 38 C30 38 45 36 65 38 S100 34 120 36 S140 34 146 34" fill="none" stroke="#5E5A96" stroke-width="3" stroke-linecap="round" stroke-dasharray="0 9"></path></svg>
+</div>
+<div style="display: flex; gap: 12px"><button class="btn" style="flex-grow: 1; background: {{accent}}; color: #0D0C0B; border: 1px solid {{accent}}; font-weight: 500">YES</button><button class="btn" style="flex-grow: 1; background: transparent; color: #F3EFE9; border: 1px solid #3A3531">NO</button></div>
+</article>
+
+<article class="card" style="padding: 24px; display: flex; flex-direction: column; justify-content: space-between">
+<div style="display: flex; justify-content: space-between"><span class="lbl"><span style="color: #F3EFE9">04</span>  Crypto</span><span class="lbl" style="color: {{accent}}; display: flex; align-items: center; gap: 6px"><span style="width: 6px; height: 6px; border-radius: 50%; background: {{accent}}"></span>Live</span></div>
+<a href="Market.dc.html" style="font-size: 21px; font-weight: 500; line-height: 1.3">ETH above $5K before year end?</a>
+<div style="display: flex; justify-content: space-between; align-items: flex-end">
+<div style="display: flex; flex-direction: column; gap: 4px"><span class="dot" style="font-size: 64px; font-weight: 900; line-height: 1; color: {{accent}}">22%</span><span class="lbl">Yes · reputation</span></div>
+<svg width="150" height="64" viewBox="0 0 150 64" aria-hidden="true"><path d="M4 30 C30 34 40 44 60 46 S95 50 110 52 S140 54 146 54" fill="none" stroke="{{accent}}" stroke-width="4" stroke-linecap="round" stroke-dasharray="0 9"></path><path d="M4 36 C30 36 45 40 65 38 S100 42 120 40 S140 42 146 42" fill="none" stroke="#5E5A96" stroke-width="3" stroke-linecap="round" stroke-dasharray="0 9"></path></svg>
+</div>
+<div style="display: flex; gap: 12px"><button class="btn" style="flex-grow: 1; background: {{accent}}; color: #0D0C0B; border: 1px solid {{accent}}; font-weight: 500">YES</button><button class="btn" style="flex-grow: 1; background: transparent; color: #F3EFE9; border: 1px solid #3A3531">NO</button></div>
+</article>
+
+<article class="card" style="padding: 24px; display: flex; flex-direction: column; justify-content: space-between">
+<div style="display: flex; justify-content: space-between"><span class="lbl"><span style="color: #F3EFE9">05</span>  Culture</span><span class="lbl" style="color: #9A948C; padding: 2px 8px; border: 1px solid #3A3531; border-radius: 999px">Dispute window</span></div>
+<a href="Market.dc.html" style="font-size: 21px; font-weight: 500; line-height: 1.3">Demo day draws more than 500 attendees?</a>
+<div style="display: flex; justify-content: space-between; align-items: flex-end">
+<div style="display: flex; flex-direction: column; gap: 4px"><span class="dot" style="font-size: 64px; font-weight: 900; line-height: 1; color: #F3EFE9">YES</span><span class="lbl">Proposed · final in 01:42</span></div>
+<svg width="150" height="64" viewBox="0 0 150 64" aria-hidden="true"><path d="M4 36 C30 30 40 34 60 30 S95 26 110 24 S140 22 146 22" fill="none" stroke="#6B645D" stroke-width="4" stroke-linecap="round" stroke-dasharray="0 9"></path></svg>
+</div>
+<div style="display: flex; gap: 12px"><button class="btn" style="flex-grow: 1; background: transparent; color: #F3EFE9; border: 1px solid #3A3531">VIEW RESOLUTION</button></div>
+</article>
+
+<article class="card" style="padding: 24px; display: flex; flex-direction: column; justify-content: space-between">
+<div style="display: flex; justify-content: space-between"><span class="lbl"><span style="color: #F3EFE9">06</span>  Tech</span><span class="lbl" style="color: {{accent}}; display: flex; align-items: center; gap: 6px"><span style="width: 6px; height: 6px; border-radius: 50%; background: {{accent}}"></span>Live</span></div>
+<a href="Market.dc.html" style="font-size: 21px; font-weight: 500; line-height: 1.3">An open-weights model tops the main leaderboard by November?</a>
+<div style="display: flex; justify-content: space-between; align-items: flex-end">
+<div style="display: flex; flex-direction: column; gap: 4px"><span class="dot" style="font-size: 64px; font-weight: 900; line-height: 1; color: {{accent}}">47%</span><span class="lbl">Yes · reputation</span></div>
+<svg width="150" height="64" viewBox="0 0 150 64" aria-hidden="true"><path d="M4 40 C30 30 40 42 60 32 S95 38 110 30 S140 34 146 30" fill="none" stroke="{{accent}}" stroke-width="4" stroke-linecap="round" stroke-dasharray="0 9"></path><path d="M4 26 C30 28 45 24 65 26 S100 22 120 24 S140 20 146 20" fill="none" stroke="#5E5A96" stroke-width="3" stroke-linecap="round" stroke-dasharray="0 9"></path></svg>
+</div>
+<div style="display: flex; gap: 12px"><button class="btn" style="flex-grow: 1; background: {{accent}}; color: #0D0C0B; border: 1px solid {{accent}}; font-weight: 500">YES</button><button class="btn" style="flex-grow: 1; background: transparent; color: #F3EFE9; border: 1px solid #3A3531">NO</button></div>
+</article>
+
+</div>
+</main>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"accent":{"editor":"color","default":"#FF5A36","options":["#FF5A36","#F5A524","#9D97F5","#F3EFE9"]},"$preview":{"width":1440,"height":1024}}'>
+class Component extends DCLogic {
+  renderVals() {
+    return { accent: this.props.accent ?? '#FF5A36' };
+  }
+}
+</script>
+</body>
+</html>

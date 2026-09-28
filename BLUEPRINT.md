@@ -1,0 +1,179 @@
+# Kleos in Chaos — Blueprint
+
+**Prediction Market with a Verifiable Reputation Layer.**
+Track: Social, Attention & Culture · Submission: by Oct 2, 2026 (official deadline Oct 13)
+
+---
+
+## 1. Product in one paragraph
+
+Every bet on Kleos weighs **money × reputation**. Reputation (R) only grows when you are right against the crowd, it shrinks faster than it grows, and every change is an on-chain event anyone can audit. Each market shows two prices side by side: what the money says and what the people who are usually right say.
+
+**Why social:** kleos is the Greek word for the renown a person earns through their deeds and that others carry for them. Here that renown is a public, non-transferable track record. Attention shifts from the loudest voice and the biggest wallet to whoever called it first.
+
+---
+
+## 2. Status
+
+| Area | State |
+|---|---|
+| Contracts (`contracts/`) | ✅ v2: payout v2, safeguards, evidence fields; 22 tests passing; Ignition deploy module |
+| Frontend (`web/`) | ✅ Markets, market page, profile, leaderboard, How it works (interactive formulas), sharp signal |
+| On-chain wiring | 🟡 Wallet, faucet and bet go on-chain when `.env` is set; reads still use demo data |
+| Monad testnet deploy | ⬜ Needs the user's key; **only with explicit authorization** |
+
+---
+
+## 3. Mechanism (implemented)
+
+| Formula | Meaning |
+|---|---|
+| `M = min(1 + 0.5·√R, 5)` | Reputation becomes a multiplier with diminishing returns and a cap |
+| `E = m · M` | Effective weight of a bet |
+| `P_money = YES$ / total$`, `P_rep = YES_E / total_E` | The two prices |
+| `payout = m + (E / ΣE_winners) · L` | Winners split the losers' money by weight, so no money is printed |
+| Right: `ΔR = +k·s·(1 − p)` · Wrong: `ΔR = −1.5·k·s·p` | p = price of your side at entry, s = min(stake / $50, 1) |
+| Boost cap | Once the pool is ≥ $5k, no address gains boost past 10% of ΣE; money always counts in full |
+
+Resolution: propose with a $10 bond → dispute window → finalize, or owner arbitration where the side that was right takes both bonds. Settlement is permissionless, so losses land even if the loser never returns.
+
+Events: `MarketCreated`, `BetPlaced`, `OutcomeProposed`, `OutcomeDisputed`, `MarketResolved`, `Settled`, `ReputationChanged`.
+
+---
+
+## 3a. Payout v2 (implemented, replaces the payout rule above)
+
+Money pays money. Reputation steers the signal and earns a fee-funded bonus.
+
+- **Principal payout:** pure parimutuel by money. `payout_i = m_i + (m_i / ΣwinningMoney) · (losingPool − fee)`
+- **Displayed odds** stay reputation-weighted (`P_rep`), shown next to the payout odds implied by money. The UI must say which number sets the payout ("pays 2.25×").
+- **Fee:** `FEE_BPS` (default 200 = 2%) of the losing pool goes to that market's `bonusPool`.
+- **Sponsorship:** `sponsor(marketId, amount)` adds to `bonusPool`; the market page shows "Sponsored by [address]". It is neutral: the bonus pays accurate contrarians on either side.
+- **Bonus:** `bonus_i = bonusPool · w_i / Σw`, with `w_i = ΔR_i · M_i` for winners whose ΔR is positive. Weighting by M (not ΔR alone) stops a whale from splitting into many fresh $50 wallets to capture the bonus.
+- **Two-phase settlement:** Σw is only known once every bettor is settled. Phase 1 settles principal and ΔR; phase 2 opens bonus claims.
+- **Rollover:** if no one has positive ΔR, `bonusPool` moves to a global pool that seeds the bonus of new markets.
+- **Tests:** newcomer and sharp get the same principal return per dollar; money paid + fees = money staked; bonuses sum to `bonusPool`; the split-wallet attack gains no bonus advantage.
+
+Demo check: $2,000 losing pool, 2% fee → $40 bonus. Each of 20 identical sharps gets $80 + $98 + $2 = **$180**, the same number as in the pitch.
+
+---
+
+## 3b. Reputation safeguards (implemented)
+
+| Safeguard | Rule | Default |
+|---|---|---|
+| Activation | M stays 1.0 until the user has `N_MIN` resolved bets; a handful of bets is mostly luck | `N_MIN = 10` |
+| Vesting | Positive ΔR goes to `pendingR` with a `vestAt`; anyone calls `vest(user)` after it (emits `Vested`). Negative ΔR applies immediately. M uses vested R only | 7 days (5 min in demo) |
+| Per-market cap | Positive ΔR from one market ≤ `DELTA_R_MAX` | 0.8 (keeps the +0.70 pitch example intact) |
+| Anomaly flag | Fewer than `N_MIN` resolved bets **and** a win at entry price ≤ `FLAG_PRICE` with size ≥ `FLAG_SIZE` → flagged (emits `Flagged`). Flagged pendingR cannot vest. Admin can `clearFlag` or `slash`. Profile shows "Under review" | `FLAG_PRICE = 0.10` |
+| Blocked topics | `createMarket` rejects blocked categories | military operations, internal government decisions |
+| Minimum depth | ΔR only counts in markets with pool ≥ `MIN_REP_POOL` and ≥ `MIN_BETTORS` distinct addresses | $1,000 · 10 |
+| Resolver gating | Proposing and disputing require vested R ≥ a threshold; addresses with a position in the market cannot propose or dispute it | tier II |
+
+**Design notes (decisions baked into the spec above):**
+
+1. **Losses hit pending gains too.** If a loss is larger than vested R, the rest comes out of `pendingR`. Otherwise R's floor at 0 would let someone bank pending gains and absorb losses for free.
+2. **Minimum depth raises the cost of self-dealing.** Without it, wallet A bets YES and burner wallet B bets NO in an empty market: A gains R for the cost of the fee, and B has nothing to lose at R = 0. With it, a farmer needs 10 wallets and $1,000 at risk, pays the 2% fee each time, waits out vesting, and still needs 10 resolved bets before any boost. It raises the cost; it doesn't make farming impossible. Known limitation.
+3. **Categories as an allowlist, not a blocklist.** `category` is free text, so a string blocklist is bypassed with a different spelling ("Military", "defense ops"). The contract accepts a fixed set of category ids, so blocked topics simply have no id.
+4. **`DELTA_R_MAX` = 0.8.** With k = 1 and s ≤ 1 a market yields ΔR < 1, so the cap only bites on long shots below 20%, which is where insider windfalls sit.
+5. **Demo seeding must include history.** With activation, seeded sharps need `N_MIN` resolved bets as well as R, or their multiplier stays at 1.0 and the 44% vs 71% demo disappears. `seedReputation` sets both, and emits both publicly.
+6. **The 10% cap is on the boost.** It limits the extra weight an address gains from reputation; money always counts in full. The 11-wallet case is answered mainly by the reputation-weighted price itself: fresh wallets carry 1× weight.
+
+**Tests:** multiplier stays 1.0 below `N_MIN`; gains vest only after the period; losses apply immediately, including against pending gains; the per-market cap holds; flagged users cannot vest; blocked categories revert; position holders cannot propose or dispute; shallow markets produce no ΔR.
+
+---
+
+## 4. Resolution evidence
+
+Proposals carry their proof, so anyone can check a resolution the same way they check reputation.
+
+- `createMarket(question, categoryId, oracle, criteria, closeTime)`: the resolution criteria are stored on-chain and shown on the market page.
+- `propose(id, outcome, evidenceHash, evidenceURI)`: the proposer attaches a link to the proof (e.g. the official result page) and its hash; both are emitted in `OutcomeProposed`.
+- The market page shows the criteria, the evidence link and the resolution track together.
+
+---
+
+## 4a. Envio HyperIndex (bounty: Best Use of Envio)
+
+The indexer turns contract events into the queries the app needs, so reputation stays verifiable end to end: chain → Envio → UI.
+
+| Entity | Built from | Used by |
+|---|---|---|
+| `Market` (prices, pools, state, evidence) | MarketCreated, BetPlaced, Outcome*, MarketResolved, Sponsored | Markets grid, market page |
+| `Bet` | BetPlaced | Recent bets, sharp signal |
+| `Trader` (R, pending, resolved bets, flagged) | ReputationChanged, Vested, Flagged, FlagCleared, Slashed | Leaderboard, profile, laurel badges |
+| `ReputationChange` (delta, entry price, tx hash) | ReputationChanged | Profile history with the math and Monadscan links |
+| `SharpSignal` per market | BetPlaced joined with Trader R ≥ 16 | "X of Y sharps bet YES" |
+
+Docker is not installed locally, so the indexer runs on Envio's hosted service. Needs: Envio docs + bounty rules (from Daniela).
+
+## 4b. Mera accounts (bounty: Best Mera-Powered UX on Monad)
+
+Mera is the whole account layer: sign in with a passkey, get test USD, bet. No seed phrase, no extension. It replaces the injected-wallet connector in the nav. Needs: Mera SDK docs + bounty rules (from Daniela).
+
+---
+
+## 5. Remaining build
+
+**Daniela (unblocks everything else)**
+
+- [ ] A fresh Monad testnet wallet for deploying (not a personal wallet) + testnet MON from the faucet
+- [ ] Vercel account for hosting (optional: any host works)
+- [ ] Open every source link in the README and confirm the numbers match
+
+**Contracts (Claude)**
+
+- [x] Payout v2: money parimutuel, 2% fee → bonus pool, sponsor(), bonus by ΔR·M, two-phase settlement (§3a)
+- [x] Safeguards: activation, vesting, per-market cap, minimum depth, anomaly flag, resolver gating, category allowlist (§3b)
+- [x] Resolution criteria + evidence hash and URI (§4)
+- [x] Tests for all of the above; update the pitch-number tests (22 passing)
+
+**App (Claude)**
+
+- [ ] Envio indexer + app reads from it (§4a)
+- [ ] Mera sign-in replacing the injected wallet (§4b)
+- [ ] Resolution UI: propose, dispute, finalize, settle, claim bonus, vest
+- [x] Payout panel shows money odds ("pays 2.25×") next to the reputation signal
+- [ ] "Under review" and "Sponsored by" on profile and market pages
+
+**Ship**
+
+- [ ] Git repo + public GitHub (the project folder is not a git repo yet)
+- [ ] Deploy contracts to Monad testnet: Claude prepares, **Daniela authorizes and signs**
+- [ ] Seed the demo on-chain (whale vs sharps, one market in dispute, one resolved)
+- [ ] Host the web app and point it at the deployed contracts
+
+**Submission deliverables**
+
+- [ ] Pitch deck
+- [ ] Demo video, ~3 min (§6)
+- [ ] Submission form: repo link, live URL, video, track selected
+
+### Timeline: everything done by Oct 2 (Daniela travels Oct 3)
+
+| Day | Claude | Daniela |
+|---|---|---|
+| Sep 28 | Contracts (payout v2 + safeguards + evidence fields + tests), git repo | Deploy wallet + testnet MON, check sources |
+| Sep 29 | On-chain reads + resolution UI | Review the app |
+| Sep 30 | Polish the demo flow; mobile pass | Authorize the deploy; start the deck |
+| Oct 1 | Deploy + seed the demo + host the site | Record the demo video |
+| Oct 2 | Fixes only, no new features | Final deck, **submit** |
+
+**Cut to fit:** the anomaly flag ships as the on-chain rule only, without an admin review screen. The Hunyuan bounty was dropped on Sep 28.
+
+---
+
+## 6. Demo script (3 min)
+
+1. **Hook:** "Your track record is worth more than their bankroll." Show the markets page.
+2. **The problem:** a whale bets $2,000 against 20 sharps betting $80 each. By money, the market says 44%. Kleos says 71%. Show it live on How it works.
+3. **Resolution:** propose YES with a link to the official result. The dispute window starts, then the market finalizes and settles.
+4. **Reputation:** open a trader's profile. Hover a ΔR to see the math, then click through to Monadscan.
+5. **Close:** "Kleos: glory you earn, not buy."
+
+---
+
+## 7. Ground rules
+
+- No wallet interaction, deploy or private-key use without Daniela's explicit authorization for that specific action.
+- Secrets live only in env vars, never in the repo or the client bundle.
