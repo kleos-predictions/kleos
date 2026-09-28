@@ -71,10 +71,15 @@ export default async function MarketPage(props: PageProps<"/market/[id]">) {
             )}
           </div>
           <ResolutionTrack stage={market.stage} />
+          <div className="flex flex-col gap-1 rounded-[12px] bg-card-alt p-4">
+            <span className="lbl">Resolution criteria · written before the first bet</span>
+            <p className="leading-relaxed">{market.criteria}</p>
+          </div>
           <p className="text-sm leading-relaxed text-muted">
-            After close, anyone can propose the outcome from <span className="text-ink">{market.oracle}</span> by posting a $10 bond.
-            During the dispute window anyone can challenge it with an equal bond. Undisputed proposals finalize automatically;
-            disputes go to arbitration and the side that was right takes both bonds.
+            After close, a trader with earned reputation and no position proposes the outcome from{" "}
+            <span className="text-ink">{market.oracle}</span> with a $10 bond. During the dispute window anyone can challenge it with a
+            $15 bond. Undisputed proposals finalize automatically. Disputes go to the Kleos Court: 5 tier-V jurors with no stake vote
+            in secret, and 3 matching votes decide YES, NO or AMBIGUOUS, which refunds everyone.
           </p>
         </section>
 

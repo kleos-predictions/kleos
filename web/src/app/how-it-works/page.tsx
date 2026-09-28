@@ -32,7 +32,7 @@ const STACK = [
   ["Chain", "Monad testnet · EVM, ~400 ms blocks, cheap enough to log every reputation change"],
   ["Contracts", "Kleos.sol (markets, weighting, payouts, reputation, resolution) · KleosUSD.sol (test stablecoin with faucet)"],
   ["Verifiability", "ReputationChanged(user, marketId, delta, newR, entryPrice, side, outcome) on every update"],
-  ["Resolution", "Propose with $10 bond → dispute window → finalize, or arbitration where the side that was right takes both bonds"],
+  ["Resolution", "Propose with a $10 bond → dispute window → finalize. A dispute ($15 bond) goes to the Kleos Court: 5 jurors, commit-reveal votes, 3 of 5 decide"],
   ["Settlement", "Permissionless: anyone can settle any trader, so losses land even if the loser never comes back"],
   ["Frontend", "Next.js · wagmi / viem · formulas mirrored client-side so every preview matches the contract"],
   ["Tests", "Hardhat · the pitch numbers (44% vs 71%, $180 payout, +0.70 / −1.43) are asserted against the contract"],
@@ -95,12 +95,13 @@ const SAFEGUARDS = [
   ["Per-market cap", "Reputation gained from any single market is capped at +0.8."],
   ["Minimum depth", "Reputation only moves in markets deep enough that you can't farm it against your own wallets."],
   ["Anomaly review", "New accounts that win a long shot with a big bet are held for review before gains vest. A heuristic, not an accusation."],
-  ["Resolver gating", "Proposing or disputing an outcome needs earned reputation and no position in that market."],
+  ["Resolver gating", "Proposing an outcome needs earned reputation and no position in that market. Disputing costs a $15 bond, so nobody disputes just because they lost."],
+  ["Kleos Court", "Disputes go to 5 jurors drawn from tier-V traders with no stake. Votes stay hidden until everyone has committed. 3 matching votes decide YES, NO or AMBIGUOUS (full refund). Jurors who vote with the verdict gain reputation; jurors whose absence forces a refund lose it."],
   ["Topic limits", "No markets on military operations or internal government decisions."],
 ];
 
 const LIMITATIONS = [
-  ["Admin arbitration", "Undisputed outcomes finalize on their own, but a dispute is settled by the contract owner."],
+  ["Jury bribery", "Votes are hidden until the reveal, but a juror can prove their vote afterward, so open bribes are possible. Random draws and reputation at stake make it costly, not impossible. Jury draws use block randomness, which block producers can nudge."],
   ["Parimutuel pricing", "Thin markets move sharply with each bet. LMSR is the planned upgrade for thin markets."],
   ["Heuristic flag", "The anomaly flag is a heuristic, not proof of insider trading."],
 ];

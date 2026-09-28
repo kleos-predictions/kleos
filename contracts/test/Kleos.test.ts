@@ -10,12 +10,13 @@ const wad = (n: number) => parseEther(String(n));
 const DISPUTE_WINDOW = 120n;
 const VEST_PERIOD = 300n;
 const N_MIN = 10;
+const COURT_PERIOD = 60n;
 const EVIDENCE = keccak256(toHex("official result page"));
 
 async function deploy() {
   const wallets = await viem.getWalletClients();
   const token = await viem.deployContract("KleosUSD");
-  const kleos = await viem.deployContract("Kleos", [token.address, DISPUTE_WINDOW, VEST_PERIOD, BigInt(N_MIN)]);
+  const kleos = await viem.deployContract("Kleos", [token.address, DISPUTE_WINDOW, VEST_PERIOD, BigInt(N_MIN), COURT_PERIOD]);
   const now = BigInt(await networkHelpers.time.latest());
   const closeTime = now + 3600n;
   await kleos.write.createMarket([
@@ -296,21 +297,6 @@ describe("markets and resolution", () => {
     assert.equal((await ctx.kleos.read.getMarket([1n])).evidenceHash, EVIDENCE);
   });
 
-  it("dispute goes to arbitration and the right party takes both bonds", async () => {
-    const ctx = await deploy();
-    const disputer = ctx.wallets[2];
-    await ctx.kleos.write.seedReputation([disputer.account.address, wad(5), N_MIN]);
-    await ctx.kleos.write.bet([1n, true, usd(10)], { account: ctx.wallets[3].account });
-    await networkHelpers.time.increaseTo(ctx.closeTime);
-
-    await ctx.kleos.write.propose([1n, false, EVIDENCE, ""], { account: ctx.resolver.account });
-    await ctx.kleos.write.dispute([1n], { account: disputer.account });
-    const before = await ctx.token.read.balanceOf([disputer.account.address]);
-    await ctx.kleos.write.arbitrate([1n, true]);
-    assert.equal((await ctx.token.read.balanceOf([disputer.account.address])) - before, usd(20));
-    assert.equal((await ctx.kleos.read.getMarket([1n])).outcome, true);
-  });
-
   it("cannot finalize while the dispute window is open", async () => {
     const ctx = await deploy();
     await networkHelpers.time.increaseTo(ctx.closeTime);
@@ -332,5 +318,119 @@ describe("markets and resolution", () => {
     const [eff] = await kleos.read.quote([1n, sharp, usd(500)]);
     // pool $5,000 → e ≤ (500 − 0) / 0.9 ≈ $555.55, below the uncapped $2,500
     assert.equal(eff, 555_555_555n);
+  });
+});
+
+describe("KleosUSD", () => {
+  it("only the sponsor can top up accounts, within the limit", async () => {
+    const { token, wallets } = await deploy();
+    const fresh = wallets[5].account.address;
+    await token.write.sponsorMint([fresh, usd(1000)]);
+    assert.equal(await token.read.balanceOf([fresh]), usd(2000), "faucet + sponsor");
+    await assert.rejects(token.write.sponsorMint([fresh, usd(1001)]), /MintTooLarge/);
+    await assert.rejects(token.write.sponsorMint([fresh, usd(1)], { account: wallets[5].account }), /NotSponsor/);
+  });
+});
+
+describe("Kleos Court", () => {
+  const VOTE = { yes: 1, no: 2, ambiguous: 3 } as const;
+  type Vote = keyof typeof VOTE;
+
+  /** Ten tier-V jurors join the pool; wallet 3 bets YES; the resolver proposes NO; wallet 3 disputes. */
+  async function disputed() {
+    const ctx = await deploy();
+    const jurors = ctx.wallets.slice(18, 28);
+    for (const j of jurors) {
+      await ctx.kleos.write.seedReputation([j.account.address, wad(40), N_MIN]);
+      await ctx.kleos.write.joinCourt({ account: j.account });
+    }
+    const disputer = ctx.wallets[3];
+    await ctx.kleos.write.bet([1n, true, usd(10)], { account: disputer.account });
+    await networkHelpers.time.increaseTo(ctx.closeTime);
+    await ctx.kleos.write.propose([1n, false, EVIDENCE, "https://example.com"], { account: ctx.resolver.account });
+    await ctx.kleos.write.dispute([1n], { account: disputer.account });
+    return { ctx, disputer };
+  }
+
+  /** Runs one round: each drawn juror votes per `plan` (null = no-show), then the round is closed. */
+  async function runRound(ctx: Ctx, plan: (i: number) => Vote | null) {
+    const court = await ctx.kleos.read.getCourt([1n]);
+    const jury = await ctx.kleos.read.getJury([1n, court.round]);
+    const byAddress = new Map(ctx.wallets.map((w) => [w.account.address.toLowerCase(), w]));
+    const cast = jury.map((j, i) => ({ w: byAddress.get(j.toLowerCase())!, vote: plan(i), salt: keccak256(toHex(`salt-${court.round}-${i}`)) }));
+    for (const { w, vote, salt } of cast) {
+      if (!vote) continue;
+      const c = await ctx.kleos.read.voteCommitment([1n, court.round, w.account.address, VOTE[vote], salt]);
+      await ctx.kleos.write.commitVote([1n, c], { account: w.account });
+    }
+    await networkHelpers.time.increaseTo(court.commitEnd);
+    for (const { w, vote, salt } of cast) {
+      if (vote) await ctx.kleos.write.revealVote([1n, VOTE[vote], salt], { account: w.account });
+    }
+    if (cast.some((c) => !c.vote)) await networkHelpers.time.increaseTo(court.revealEnd);
+    await ctx.kleos.write.closeCourt([1n]);
+    return cast.map((c) => c.w.account.address);
+  }
+
+  it("draws 5 jurors with no stake; bettors may dispute, only once, and the proposer may not", async () => {
+    const { ctx } = await disputed();
+    const jury = await ctx.kleos.read.getJury([1n, 1]);
+    assert.equal(jury.length, 5);
+    await assert.rejects(ctx.kleos.write.dispute([1n], { account: ctx.wallets[4].account }), /BadState/);
+  });
+
+  it("only tier V can join the jury pool", async () => {
+    const ctx = await deploy();
+    await ctx.kleos.write.seedReputation([ctx.wallets[1].account.address, wad(20), N_MIN]);
+    await assert.rejects(ctx.kleos.write.joinCourt({ account: ctx.wallets[1].account }), /NotEligibleJuror/);
+  });
+
+  it("3 of 5 uphold the proposal: the disputer's bond pays the majority, reputation moves", async () => {
+    const { ctx, disputer } = await disputed();
+    const before = await ctx.token.read.balanceOf([disputer.account.address]);
+    const jurors = await runRound(ctx, (i) => (i < 3 ? "no" : "yes"));
+    const m = await ctx.kleos.read.getMarket([1n]);
+    assert.equal(m.outcome, false);
+    assert.equal(await ctx.token.read.balanceOf([disputer.account.address]), before, "disputer's $15 bond is gone");
+    assert.equal(asNumber((await rep(ctx, jurors[0])).pending), 0.3, "majority juror earns reputation (vesting)");
+    assert.equal(asNumber((await rep(ctx, jurors[4])).r), 39.7, "minority juror loses reputation");
+  });
+
+  it("3 of 5 overturn the proposal: the disputer gets both bonds", async () => {
+    const { ctx, disputer } = await disputed();
+    const before = await ctx.token.read.balanceOf([disputer.account.address]);
+    await runRound(ctx, () => "yes");
+    assert.equal((await ctx.kleos.read.getMarket([1n])).outcome, true);
+    assert.equal((await ctx.token.read.balanceOf([disputer.account.address])) - before, usd(25), "$15 bond back + the proposer's $10");
+  });
+
+  it("AMBIGUOUS voids the market and refunds everyone, with no reputation change", async () => {
+    const { ctx, disputer } = await disputed();
+    const before = await ctx.token.read.balanceOf([disputer.account.address]);
+    await runRound(ctx, (i) => (i < 3 ? "ambiguous" : "no"));
+    assert.equal((await ctx.kleos.read.getMarket([1n])).voided, true);
+    await ctx.settleAll();
+    // Bond back ($15) plus the $10 bet refunded in full.
+    assert.equal((await ctx.token.read.balanceOf([disputer.account.address])) - before, usd(25));
+    assert.equal((await rep(ctx, disputer.account.address)).resolvedBets, 0);
+  });
+
+  it("no-shows cost nothing when the market still closes", async () => {
+    const { ctx } = await disputed();
+    const round1 = await runRound(ctx, (i) => (i < 2 ? "no" : null)); // no quorum → redraw
+    assert.equal((await ctx.kleos.read.getCourt([1n])).round, 2);
+    await runRound(ctx, () => "no");
+    assert.equal((await ctx.kleos.read.getMarket([1n])).outcome, false);
+    assert.equal(asNumber((await rep(ctx, round1[4])).r), 40, "round-1 no-show keeps reputation");
+  });
+
+  it("no-shows are slashed when their absence forces a refund", async () => {
+    const { ctx } = await disputed();
+    const round1 = await runRound(ctx, () => null);
+    const round2 = await runRound(ctx, (i) => (i === 0 ? "yes" : null));
+    assert.equal((await ctx.kleos.read.getMarket([1n])).voided, true);
+    assert.equal(asNumber((await rep(ctx, round1[0])).r), 39);
+    assert.equal(asNumber((await rep(ctx, round2[1])).r), 39);
+    assert.equal(asNumber((await rep(ctx, round2[0])).r), 40, "the one juror who voted isn't slashed");
   });
 });

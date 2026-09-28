@@ -79,7 +79,8 @@ function MultiplierStep() {
   const m = multiplier(r);
   const W = 520, H = 180, RMAX = 100;
   const x = (v: number) => 10 + (v / RMAX) * (W - 20);
-  const y = (v: number) => 10 + (1 - (v - 1) / (PARAMS.mMax - 1)) * (H - 20);
+  // Top padding leaves room for the "CAP 5×" label above the ceiling line.
+  const y = (v: number) => 28 + (1 - (v - 1) / (PARAMS.mMax - 1)) * (H - 38);
   const curve = smoothPath(Array.from({ length: 41 }, (_, i) => [x((i / 40) * RMAX), y(multiplier((i / 40) * RMAX))]));
   return (
     <Step n="01" title="Reputation becomes a multiplier" formula="M = min(1 + α·√R, 5)   α = 0.5">
