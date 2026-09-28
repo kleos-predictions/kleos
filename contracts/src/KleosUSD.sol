@@ -3,7 +3,8 @@ pragma solidity ^0.8.24;
 
 /// @title KleosUSD
 /// @notice Test stablecoin for the Kleos testnet demo. Anyone can mint from the faucet
-///         once per cooldown. 6 decimals, like USDC.
+///         once per cooldown, and the sponsor can top up new passkey accounts so the first
+///         bet needs no extra step. 6 decimals, like USDC.
 contract KleosUSD {
     string public constant name = "Kleos Test USD";
     string public constant symbol = "kUSD";
@@ -12,6 +13,10 @@ contract KleosUSD {
     uint256 public constant FAUCET_AMOUNT = 1_000e6;
     uint256 public constant FAUCET_COOLDOWN = 1 hours;
 
+    uint256 public constant SPONSOR_MINT_MAX = 1_000e6;
+
+    address public owner;
+    address public sponsor;
     uint256 public totalSupply;
     mapping(address => uint256) public balanceOf;
     mapping(address => mapping(address => uint256)) public allowance;
@@ -21,8 +26,28 @@ contract KleosUSD {
     event Approval(address indexed owner, address indexed spender, uint256 value);
 
     error FaucetCooldown(uint256 availableAt);
+    error NotOwner();
+    error NotSponsor();
+    error MintTooLarge();
     error InsufficientBalance();
     error InsufficientAllowance();
+
+    constructor() {
+        owner = msg.sender;
+        sponsor = msg.sender;
+    }
+
+    function setSponsor(address next) external {
+        if (msg.sender != owner) revert NotOwner();
+        sponsor = next;
+    }
+
+    /// @notice Test money for a new account, sent by the app's sponsor wallet.
+    function sponsorMint(address to, uint256 value) external {
+        if (msg.sender != sponsor) revert NotSponsor();
+        if (value > SPONSOR_MINT_MAX) revert MintTooLarge();
+        _mint(to, value);
+    }
 
     function faucet() external {
         uint256 availableAt = lastFaucet[msg.sender] + FAUCET_COOLDOWN;

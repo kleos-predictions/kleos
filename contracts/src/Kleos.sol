@@ -21,6 +21,10 @@ interface IERC20 {
 ///
 /// Safeguards: activation after N_MIN resolved bets, vesting of gains, per-market gain cap,
 /// minimum market depth, anomaly flag, resolver gating, category allowlist.
+///
+/// Kleos Court: a disputed proposal goes to 5 jurors drawn from a pool of tier-V traders
+/// with no position in the market. Votes are committed, then revealed; 3 matching votes
+/// decide YES, NO or AMBIGUOUS (the market is voided and everyone is refunded).
 /// Every change to R emits ReputationChanged so anyone can rebuild and audit it.
 /// Fixed-point values (R, M, p, s, weights) use 18 decimals. Money uses the token's decimals.
 contract Kleos {
@@ -42,11 +46,25 @@ contract Kleos {
     uint256 public constant MIN_BETTORS = 10; // …with at least this many distinct bettors
     uint256 public constant FLAG_PRICE = 0.1e18; // long-shot threshold for the anomaly flag
     uint256 public constant FLAG_SIZE = 100e6; // size threshold for the anomaly flag
-    uint256 public constant RESOLVER_MIN_R = 4e18; // tier II to propose or dispute
+    uint256 public constant RESOLVER_MIN_R = 4e18; // tier II to propose
+
+    // Kleos Court
+    uint256 public constant DISPUTE_BOND = 15e6; // disputing just because you lost costs money
+    uint256 public constant JUROR_MIN_R = 36e18; // tier V to sit in the jury pool
+    uint256 public constant JURY_SIZE = 5;
+    uint256 public constant QUORUM = 3; // 3 of 5 matching votes decide
+    uint256 public constant MAX_ROUNDS = 2; // one redraw, then the market is voided
+    uint256 public constant JUROR_REWARD = 0.3e18; // voting with the verdict (vests)
+    uint256 public constant JUROR_PENALTY = 0.3e18; // voting against it
+    uint256 public constant NO_SHOW_PENALTY = 1e18; // only when missing votes forced a refund
+    uint8 public constant VOTE_YES = 1;
+    uint8 public constant VOTE_NO = 2;
+    uint8 public constant VOTE_AMBIGUOUS = 3;
 
     uint256 public immutable DISPUTE_WINDOW;
     uint256 public immutable VEST_PERIOD;
     uint256 public immutable N_MIN; // resolved bets before reputation boosts anything
+    uint256 public immutable COURT_PERIOD; // length of the commit phase, and of the reveal phase
 
     // ─── Storage ───────────────────────────────────────────────────────────────
     enum State {
@@ -64,6 +82,7 @@ contract Kleos {
         uint64 closeTime;
         State state;
         bool outcome; // true = YES
+        bool voided; // resolved AMBIGUOUS: everyone is refunded
         bool proposedOutcome;
         uint64 proposedAt;
         address proposer;
@@ -87,6 +106,14 @@ contract Kleos {
         uint256 money;
         uint256 eff;
         uint256 priceSum; // Σ money·p, so the entry price is the money-weighted average
+    }
+
+    struct Court {
+        uint8 round;
+        uint8 revealed;
+        uint64 commitEnd;
+        uint64 revealEnd;
+        uint8[4] tally; // indexed by vote
     }
 
     struct Rep {
@@ -113,6 +140,14 @@ contract Kleos {
     mapping(uint256 => mapping(address => bool)) public bonusClaimed;
     mapping(address => Rep) internal _rep;
 
+    address[] internal _jurorPool;
+    mapping(address => uint256) internal _poolSlot; // index + 1; 0 = not in the pool
+    mapping(uint256 => Court) internal _courts;
+    mapping(uint256 => mapping(uint8 => address[])) internal _jury;
+    mapping(uint256 => mapping(uint8 => mapping(address => bytes32))) public commitments;
+    mapping(uint256 => mapping(uint8 => mapping(address => uint8))) public votes;
+    mapping(uint256 => mapping(uint8 => bool)) internal _lackedQuorum;
+
     // ─── Events ────────────────────────────────────────────────────────────────
     event CategoryAdded(uint8 indexed id, string name);
     event MarketCreated(uint256 indexed marketId, string question, uint8 category, string oracle, string criteria, uint64 closeTime);
@@ -131,6 +166,14 @@ contract Kleos {
     event OutcomeProposed(uint256 indexed marketId, address indexed proposer, bool outcome, bytes32 evidenceHash, string evidenceURI);
     event OutcomeDisputed(uint256 indexed marketId, address indexed disputer);
     event MarketResolved(uint256 indexed marketId, bool outcome, uint256 fee);
+    event MarketVoided(uint256 indexed marketId);
+    event JurorJoined(address indexed juror);
+    event JurorLeft(address indexed juror);
+    event JuryDrawn(uint256 indexed marketId, uint8 round, address[] jurors);
+    event VoteCommitted(uint256 indexed marketId, uint8 round, address indexed juror);
+    event VoteRevealed(uint256 indexed marketId, uint8 round, address indexed juror, uint8 vote);
+    event CourtRedrawn(uint256 indexed marketId, uint8 failedRound);
+    event Verdict(uint256 indexed marketId, uint8 round, uint8 vote);
     event Settled(uint256 indexed marketId, address indexed user, uint256 payout, uint256 bonusWeight);
     event BonusOpened(uint256 indexed marketId, uint256 bonusPool, uint256 totalWeight);
     event BonusClaimed(uint256 indexed marketId, address indexed user, uint256 amount);
@@ -161,6 +204,9 @@ contract Kleos {
     error WindowOpen();
     error WindowClosed();
     error NotEligibleResolver();
+    error NotEligibleJuror();
+    error NotJuror();
+    error BadVote();
     error NothingToVest();
     error StillVesting();
     error UnderReview();
@@ -173,12 +219,13 @@ contract Kleos {
         _;
     }
 
-    constructor(IERC20 usd_, uint256 disputeWindow, uint256 vestPeriod, uint256 nMin) {
+    constructor(IERC20 usd_, uint256 disputeWindow, uint256 vestPeriod, uint256 nMin, uint256 courtPeriod) {
         usd = usd_;
         owner = msg.sender;
         DISPUTE_WINDOW = disputeWindow;
         VEST_PERIOD = vestPeriod;
         N_MIN = nMin;
+        COURT_PERIOD = courtPeriod;
         _addCategory(1, "Crypto");
         _addCategory(2, "Sports");
         _addCategory(3, "Tech");
@@ -331,7 +378,7 @@ contract Kleos {
         emit Sponsored(id, msg.sender, amount);
     }
 
-    // ─── Resolution: propose → dispute window → finalize (or owner arbitrates) ──
+    // ─── Resolution: propose → dispute window → finalize, or the Kleos Court ────
     function propose(uint256 id, bool outcome, bytes32 evidenceHash, string calldata evidenceURI) external {
         Market storage m = _markets[id];
         if (m.state != State.Open) revert BadState();
@@ -347,15 +394,18 @@ contract Kleos {
         emit OutcomeProposed(id, msg.sender, outcome, evidenceHash, evidenceURI);
     }
 
+    /// @notice Anyone except the proposer can dispute, bettors included, by posting DISPUTE_BOND.
+    ///         One dispute per market; it sends the question to the Kleos Court.
     function dispute(uint256 id) external {
         Market storage m = _markets[id];
         if (m.state != State.Proposed) revert BadState();
         if (block.timestamp >= m.proposedAt + DISPUTE_WINDOW) revert WindowClosed();
-        _requireResolver(id);
-        _pull(msg.sender, BOND);
+        if (msg.sender == m.proposer) revert NotEligibleResolver();
+        _pull(msg.sender, DISPUTE_BOND);
         m.state = State.Disputed;
         m.disputer = msg.sender;
         emit OutcomeDisputed(id, msg.sender);
+        _drawJury(id, m);
     }
 
     function finalize(uint256 id) external {
@@ -364,14 +414,6 @@ contract Kleos {
         if (block.timestamp < m.proposedAt + DISPUTE_WINDOW) revert WindowOpen();
         _resolve(id, m.proposedOutcome);
         _push(m.proposer, BOND);
-    }
-
-    /// @notice Settles a disputed market. Whoever was right takes both bonds.
-    function arbitrate(uint256 id, bool outcome) external onlyOwner {
-        Market storage m = _markets[id];
-        if (m.state != State.Disputed) revert BadState();
-        _resolve(id, outcome);
-        _push(outcome == m.proposedOutcome ? m.proposer : m.disputer, 2 * BOND);
     }
 
     /// @dev Resolvers need earned reputation and no stake in the market they judge.
@@ -392,6 +434,184 @@ contract Kleos {
         emit MarketResolved(id, outcome, fee);
     }
 
+    function _void(uint256 id, Market storage m) internal {
+        m.state = State.Resolved;
+        m.voided = true;
+        emit MarketVoided(id);
+    }
+
+    // ─── Kleos Court ────────────────────────────────────────────────────────────
+    function joinCourt() external {
+        Rep storage rep = _rep[msg.sender];
+        if (rep.r < JUROR_MIN_R || rep.flagged || rep.resolvedBets < N_MIN) revert NotEligibleJuror();
+        if (_poolSlot[msg.sender] != 0) return;
+        _jurorPool.push(msg.sender);
+        _poolSlot[msg.sender] = _jurorPool.length;
+        emit JurorJoined(msg.sender);
+    }
+
+    function leaveCourt() external {
+        uint256 slot = _poolSlot[msg.sender];
+        if (slot == 0) return;
+        address last = _jurorPool[_jurorPool.length - 1];
+        _jurorPool[slot - 1] = last;
+        _poolSlot[last] = slot;
+        _jurorPool.pop();
+        delete _poolSlot[msg.sender];
+        emit JurorLeft(msg.sender);
+    }
+
+    /// @dev Draws up to JURY_SIZE eligible jurors. On-chain randomness can be nudged by block
+    ///      producers; acceptable on testnet, and listed as a known limitation.
+    function _drawJury(uint256 id, Market storage m) internal {
+        Court storage c = _courts[id];
+        c.round++;
+        c.revealed = 0;
+        delete c.tally;
+        c.commitEnd = uint64(block.timestamp + COURT_PERIOD);
+        c.revealEnd = uint64(block.timestamp + 2 * COURT_PERIOD);
+
+        address[] storage jury = _jury[id][c.round];
+        uint256 n = _jurorPool.length;
+        uint256 seed = uint256(keccak256(abi.encode(block.prevrandao, blockhash(block.number - 1), id, c.round)));
+        // Random probes first, then a sweep so a small pool still fills the jury.
+        for (uint256 i; i < 3 * n + n && jury.length < JURY_SIZE; ++i) {
+            uint256 idx = i < 3 * n ? uint256(keccak256(abi.encode(seed, i))) % n : (seed + i) % n;
+            address j = _jurorPool[idx];
+            if (_eligibleJuror(id, m, c.round, j)) jury.push(j);
+        }
+        emit JuryDrawn(id, c.round, jury);
+    }
+
+    function _eligibleJuror(uint256 id, Market storage m, uint8 round, address j) internal view returns (bool) {
+        Rep storage rep = _rep[j];
+        if (rep.r < JUROR_MIN_R || rep.flagged || hasBet[id][j] || j == m.proposer || j == m.disputer) return false;
+        if (_onJury(id, round, j)) return false; // already drawn this round
+        return round == 1 || !_onJury(id, round - 1, j); // a redraw brings fresh eyes
+    }
+
+    function _onJury(uint256 id, uint8 round, address j) internal view returns (bool) {
+        address[] storage jury = _jury[id][round];
+        for (uint256 i; i < jury.length; ++i) if (jury[i] == j) return true;
+        return false;
+    }
+
+    function voteCommitment(uint256 id, uint8 round, address juror, uint8 vote, bytes32 salt) public pure returns (bytes32) {
+        return keccak256(abi.encode(id, round, juror, vote, salt));
+    }
+
+    /// @notice Jurors commit a hidden vote first, so nobody can copy or pressure a visible tally.
+    function commitVote(uint256 id, bytes32 commitment) external {
+        Court storage c = _courts[id];
+        if (_markets[id].state != State.Disputed || block.timestamp >= c.commitEnd) revert WindowClosed();
+        if (!_onJury(id, c.round, msg.sender)) revert NotJuror();
+        commitments[id][c.round][msg.sender] = commitment;
+        emit VoteCommitted(id, c.round, msg.sender);
+    }
+
+    function revealVote(uint256 id, uint8 vote, bytes32 salt) external {
+        Court storage c = _courts[id];
+        if (_markets[id].state != State.Disputed) revert BadState();
+        if (block.timestamp < c.commitEnd) revert WindowOpen();
+        if (block.timestamp >= c.revealEnd) revert WindowClosed();
+        bytes32 committed = commitments[id][c.round][msg.sender];
+        if (vote < VOTE_YES || vote > VOTE_AMBIGUOUS || committed == 0 || votes[id][c.round][msg.sender] != 0) revert BadVote();
+        if (committed != voteCommitment(id, c.round, msg.sender, vote, salt)) revert BadVote();
+        votes[id][c.round][msg.sender] = vote;
+        c.revealed++;
+        c.tally[vote]++;
+        emit VoteRevealed(id, c.round, msg.sender, vote);
+    }
+
+    /// @notice Anyone can close a round once reveals are over, or as soon as every juror revealed.
+    function closeCourt(uint256 id) external {
+        Market storage m = _markets[id];
+        Court storage c = _courts[id];
+        if (m.state != State.Disputed) revert BadState();
+        uint8 round = c.round;
+        if (block.timestamp < c.revealEnd && c.revealed < _jury[id][round].length) revert WindowOpen();
+
+        uint8 verdict;
+        for (uint8 v = VOTE_YES; v <= VOTE_AMBIGUOUS; ++v) {
+            if (c.tally[v] >= QUORUM) verdict = v;
+        }
+
+        if (verdict == 0) {
+            if (c.revealed < QUORUM) _lackedQuorum[id][round] = true;
+            if (round < MAX_ROUNDS) {
+                emit CourtRedrawn(id, round);
+                _drawJury(id, m);
+                return;
+            }
+            // The court failed: refund everyone. Only jurors whose absence broke quorum pay for it.
+            _void(id, m);
+            for (uint8 r = 1; r <= round; ++r) {
+                if (_lackedQuorum[id][r]) _penalizeNoShows(id, r);
+            }
+            _push(m.proposer, BOND);
+            _push(m.disputer, DISPUTE_BOND);
+            return;
+        }
+
+        emit Verdict(id, round, verdict);
+        _scoreJurors(id, round, verdict);
+        if (verdict == VOTE_AMBIGUOUS) {
+            _void(id, m);
+            _push(m.proposer, BOND);
+            _push(m.disputer, DISPUTE_BOND);
+        } else {
+            bool outcome = verdict == VOTE_YES;
+            _resolve(id, outcome);
+            if (outcome == m.proposedOutcome) {
+                // The dispute failed: the proposer is made whole and the disputer's bond pays the jury.
+                _push(m.proposer, BOND);
+                _payMajority(id, round, verdict, DISPUTE_BOND);
+            } else {
+                _push(m.disputer, DISPUTE_BOND + BOND);
+            }
+        }
+    }
+
+    function _scoreJurors(uint256 id, uint8 round, uint8 verdict) internal {
+        address[] storage jury = _jury[id][round];
+        for (uint256 i; i < jury.length; ++i) {
+            address j = jury[i];
+            uint8 vote = votes[id][round][j];
+            if (vote == 0) continue; // quorum was met, so a no-show costs nothing
+            Rep storage rep = _rep[j];
+            if (vote == verdict) {
+                rep.pending += JUROR_REWARD;
+                rep.vestAt = uint64(block.timestamp + VEST_PERIOD);
+                emit ReputationChanged(j, id, int256(JUROR_REWARD), rep.r, rep.pending, 0, false, false);
+            } else {
+                uint256 taken = _takeReputation(rep, JUROR_PENALTY);
+                emit ReputationChanged(j, id, -int256(taken), rep.r, rep.pending, 0, false, false);
+            }
+        }
+    }
+
+    function _penalizeNoShows(uint256 id, uint8 round) internal {
+        address[] storage jury = _jury[id][round];
+        for (uint256 i; i < jury.length; ++i) {
+            address j = jury[i];
+            if (votes[id][round][j] != 0) continue;
+            uint256 taken = _takeReputation(_rep[j], NO_SHOW_PENALTY);
+            emit ReputationChanged(j, id, -int256(taken), _rep[j].r, _rep[j].pending, 0, false, false);
+        }
+    }
+
+    function _payMajority(uint256 id, uint8 round, uint8 verdict, uint256 amount) internal {
+        address[] storage jury = _jury[id][round];
+        uint256 share = amount / _courts[id].tally[verdict];
+        uint256 paid;
+        for (uint256 i; i < jury.length; ++i) {
+            if (votes[id][round][jury[i]] != verdict) continue;
+            _push(jury[i], share);
+            paid += share;
+        }
+        globalBonusPool += amount - paid; // rounding dust funds future markets
+    }
+
     // ─── Settlement, phase 1: principal and reputation. Anyone can call it for anyone. ─
     function settle(uint256 id, address[] calldata users) external {
         Market storage m = _markets[id];
@@ -407,6 +627,14 @@ contract Kleos {
         if (settled[id][user] || !hasBet[id][user]) return;
         settled[id][user] = true;
         payouts[id].settledCount++;
+
+        if (m.voided) {
+            // AMBIGUOUS: everyone gets their money back and nobody's reputation moves.
+            uint256 refund = positions[id][user][true].money + positions[id][user][false].money;
+            _push(user, refund);
+            emit Settled(id, user, refund, 0);
+            return;
+        }
 
         bool outcome = m.outcome;
         Position storage win = positions[id][user][outcome];
@@ -539,6 +767,18 @@ contract Kleos {
 
     function getBettors(uint256 id) external view returns (address[] memory) {
         return _bettors[id];
+    }
+
+    function getCourt(uint256 id) external view returns (Court memory) {
+        return _courts[id];
+    }
+
+    function getJury(uint256 id, uint8 round) external view returns (address[] memory) {
+        return _jury[id][round];
+    }
+
+    function jurorPool() external view returns (address[] memory) {
+        return _jurorPool;
     }
 
     // ─── Internals ─────────────────────────────────────────────────────────────

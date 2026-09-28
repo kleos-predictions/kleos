@@ -35,7 +35,7 @@ Every bet on Kleos weighs **money × reputation**. Reputation (R) only grows whe
 | Right: `ΔR = +k·s·(1 − p)` · Wrong: `ΔR = −1.5·k·s·p` | p = price of your side at entry, s = min(stake / $50, 1) |
 | Boost cap | Once the pool is ≥ $5k, no address gains boost past 10% of ΣE; money always counts in full |
 
-Resolution: propose with a $10 bond → dispute window → finalize, or owner arbitration where the side that was right takes both bonds. Settlement is permissionless, so losses land even if the loser never returns.
+Resolution: propose with a $10 bond → dispute window → finalize, or the Kleos Court (§3c). Settlement is permissionless, so losses land even if the loser never returns.
 
 Events: `MarketCreated`, `BetPlaced`, `OutcomeProposed`, `OutcomeDisputed`, `MarketResolved`, `Settled`, `ReputationChanged`.
 
@@ -83,6 +83,27 @@ Demo check: $2,000 losing pool, 2% fee → $40 bonus. Each of 20 identical sharp
 
 ---
 
+## 3c. Kleos Court (implemented)
+
+Disputes are judged by reputation, not by the platform or token holders.
+
+| Rule | Value |
+|---|---|
+| Who can dispute | Anyone except the proposer, bettors included. One dispute per market |
+| Dispute bond | $15: if the jury upholds the proposal, it's split among the majority jurors |
+| Jury pool | Opt-in (`joinCourt`) for tier V: vested R ≥ 36, 10+ resolved bets, not flagged |
+| Draw | 5 jurors per round, with no position in the market, never the proposer or disputer; a redraw excludes the previous jury |
+| Voting | Commit a hidden vote, then reveal. Options: YES, NO, AMBIGUOUS |
+| Verdict | 3 matching votes. YES/NO resolves the market; AMBIGUOUS voids it and refunds everyone |
+| No verdict | One redraw. If the second round also fails, the market is voided and refunded |
+| Juror incentives | With the verdict: +0.3 R (vests), plus a share of the losing bond. Against: −0.3 R |
+| No-shows | Penalized −1.0 R **only** when their round lacked quorum and the market ended up refunded. If the market still closes, a no-show costs nothing |
+| Bonds | Proposal upheld: proposer refunded, disputer's $15 pays the jury. Overturned: disputer gets $15 + the proposer's $10. AMBIGUOUS or failed court: both refunded |
+
+**Known limits:** jurors can prove their vote after the reveal, so open bribes are possible (costly, not impossible). The draw uses block randomness, which block producers can nudge. The demo seeds a transparent jury pool (marketId 0 events).
+
+---
+
 ## 4. Resolution evidence
 
 Proposals carry their proof, so anyone can check a resolution the same way they check reputation.
@@ -105,11 +126,41 @@ The indexer turns contract events into the queries the app needs, so reputation 
 | `ReputationChange` (delta, entry price, tx hash) | ReputationChanged | Profile history with the math and Monadscan links |
 | `SharpSignal` per market | BetPlaced joined with Trader R ≥ 16 | "X of Y sharps bet YES" |
 
-Docker is not installed locally, so the indexer runs on Envio's hosted service. Needs: Envio docs + bounty rules (from Daniela).
+Docker is not installed locally, so the indexer runs on Envio Cloud.
+
+**Judging:** depth of use (non-trivial schema, derived/aggregated entities), working product with live and correct data, originality, craft (readable code, sensible schema).
+**Deliverables:** a deployed indexer with a **public repo** showing `config.yaml`, `schema.graphql` and event handlers; a frontend that consumes the data; a short demo of data flowing end to end.
+**Why Kleos scores well:** `Trader` is aggregated from six event types, `SharpSignal` joins bets with reputation, and every profile row traces back to a transaction. Reputation is only "verifiable" if the data path is too.
+
+> The repo is private today. It must be made public before submission.
+
+**Setup notes (HyperIndex v3.12.1):**
+- Lives in `indexer/` (Envio Cloud supports a monorepo root dir). pnpm, not npm: npm fails on install.
+- `config.yaml` uses v3 `chains:` syntax. Monad testnet (10143) is supported by HyperSync natively, so no RPC is needed.
+- Aggregates (`Trader`, `SharpSignal`) are computed in handlers: Envio Cloud has no `_aggregate` queries.
+- Local dev without Docker: handler tests via `createTestIndexer`; the app reads from an Envio Cloud dev deployment (free plan: 3 indexers, 100k events).
+- The GraphQL endpoint is public; numbers come back as strings and addresses checksummed.
 
 ## 4b. Mera accounts (bounty: Best Mera-Powered UX on Monad)
 
-Mera is the whole account layer: sign in with a passkey, get test USD, bet. No seed phrase, no extension. It replaces the injected-wallet connector in the nav. Needs: Mera SDK docs + bounty rules (from Daniela).
+Mera is the whole account layer: sign in with a passkey, get test USD, bet. No seed phrase, no extension, no custody backend. It replaces the injected-wallet connector in the nav. The goal: the user never notices there's a blockchain underneath.
+
+**Judging:** time-to-first-transaction (taps and seconds from landing to a confirmed Monad tx), session design (which actions are prompt-free vs re-prompt, clean session-expiry UX), the stateless test, and bonus credit for composing with the account stack (gas sponsorship, intents, recovery, smart accounts).
+
+**Plan:**
+- Landing → "Start with a passkey" → one tap creates the account, funds it and places the first bet. Target: ≤ 3 taps.
+- New accounts have no MON for gas, so the first-run flow must fund them (a faucet drip or gas sponsorship; the approach depends on what Mera supports).
+- Prompt-free inside a session: betting small amounts, claiming, vesting. Re-prompt: large bets and resolution actions that post a bond.
+- Nothing sensitive is persisted: the account is re-derived from the passkey on any device.
+
+**Setup notes (`@category-labs/mera` 0.2.0, preview):**
+- Passkey → PRF output → BIP-39 → BIP-44 key → `toViemAccount(session)`. Signing inside a live session shows no prompt; `session.end()` zeroes the key.
+- Sessions have no built-in expiry: Kleos ends them after 15 min idle and re-prompts for bets above $100 and for bonded resolution actions.
+- Store only the credential id and cached address. Never persist the PRF output, mnemonic, seed, key or session. Don't use vault mode (it stores state).
+- The rpId must be one fixed domain: Vercel preview URLs would derive different accounts.
+- Every WebAuthn call must be the first `await` in a click handler (Safari).
+- PRF isn't available on desktop Chrome with a local profile, Bitwarden or Dashlane: show a clear message on `PRF_UNAVAILABLE`.
+- No gas sponsorship built in: a server route with a sponsor wallet drips MON and calls `KleosUSD.sponsorMint` for new accounts. Recovery: "Show recovery phrase" re-derives the BIP-39 phrase behind a fresh ceremony.
 
 ---
 
@@ -126,11 +177,13 @@ Mera is the whole account layer: sign in with a passkey, get test USD, bet. No s
 - [x] Payout v2: money parimutuel, 2% fee → bonus pool, sponsor(), bonus by ΔR·M, two-phase settlement (§3a)
 - [x] Safeguards: activation, vesting, per-market cap, minimum depth, anomaly flag, resolver gating, category allowlist (§3b)
 - [x] Resolution criteria + evidence hash and URI (§4)
-- [x] Tests for all of the above; update the pitch-number tests (22 passing)
+- [x] Tests for all of the above; update the pitch-number tests
+- [x] Kleos Court: jury disputes with commit-reveal and AMBIGUOUS refunds (§3c); 29 tests passing
 
 **App (Claude)**
 
 - [ ] Envio indexer + app reads from it (§4a)
+- [x] Compare page: traditional markets vs Kleos on real cases (Zelensky suit source pending)
 - [ ] Mera sign-in replacing the injected wallet (§4b)
 - [ ] Resolution UI: propose, dispute, finalize, settle, claim bonus, vest
 - [x] Payout panel shows money odds ("pays 2.25×") next to the reputation signal
@@ -138,7 +191,8 @@ Mera is the whole account layer: sign in with a passkey, get test USD, bet. No s
 
 **Ship**
 
-- [ ] Git repo + public GitHub (the project folder is not a git repo yet)
+- [x] Git repo (private: github.com/danimim/kleos, teammate apokusin invited)
+- [ ] Make the repo public before submission (required by the Envio bounty)
 - [ ] Deploy contracts to Monad testnet: Claude prepares, **Daniela authorizes and signs**
 - [ ] Seed the demo on-chain (whale vs sharps, one market in dispute, one resolved)
 - [ ] Host the web app and point it at the deployed contracts

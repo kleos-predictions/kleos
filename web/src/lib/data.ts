@@ -15,6 +15,7 @@ export type Market = {
   category: Category;
   status: Status;
   oracle: string;
+  criteria: string; // stored on-chain at creation, shown before every bet
   type: string;
   closesAt: string;
   volume: number;
@@ -87,6 +88,7 @@ export const MARKETS: Market[] = [
     category: "Crypto",
     status: "live",
     oracle: "Chainlink BTC/USD",
+    criteria: "YES if the Chainlink BTC/USD feed reads above 120,000 at 23:59 UTC on Oct 31.",
     type: "Price feed",
     closesAt: "Oct 31, 23:59 UTC",
     volume: 48_210,
@@ -103,6 +105,7 @@ export const MARKETS: Market[] = [
     category: "Tech",
     status: "live",
     oracle: "Monadscan daily tx count",
+    criteria: "YES if Monadscan shows any UTC day with more than 10,000,000 transactions before Dec 1.",
     type: "Onchain metric",
     closesAt: "Dec 1, 00:00 UTC",
     volume: 21_904,
@@ -119,6 +122,7 @@ export const MARKETS: Market[] = [
     category: "Sports",
     status: "closing",
     oracle: "Official league result",
+    criteria: "YES if the home side wins in regular time, per the league's official result.",
     type: "Sports result",
     closesAt: "Sun, 15:00 UTC",
     volume: 12_730,
@@ -135,6 +139,7 @@ export const MARKETS: Market[] = [
     category: "Crypto",
     status: "live",
     oracle: "Chainlink ETH/USD",
+    criteria: "YES if the Chainlink ETH/USD feed reads above 5,000 at any point before Dec 31, 23:59 UTC.",
     type: "Price feed",
     closesAt: "Dec 31, 23:59 UTC",
     volume: 36_455,
@@ -151,6 +156,7 @@ export const MARKETS: Market[] = [
     category: "Culture",
     status: "dispute",
     oracle: "Organizer check-in count",
+    criteria: "YES if the organizer's published check-in count is above 500.",
     type: "Event count",
     closesAt: "Closed",
     volume: 5_120,
@@ -168,6 +174,7 @@ export const MARKETS: Market[] = [
     category: "Tech",
     status: "live",
     oracle: "LMArena text leaderboard",
+    criteria: "YES if a model with public weights is ranked #1 on the LMArena text leaderboard on Nov 30.",
     type: "Public ranking",
     closesAt: "Nov 30, 23:59 UTC",
     volume: 18_377,

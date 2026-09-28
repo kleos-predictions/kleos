@@ -126,6 +126,12 @@ export function TradePanel({ market }: { market: Market }) {
           </div>
         </div>
 
+        <div className="flex flex-col gap-1 rounded-[12px] border border-line p-3">
+          <span className="lbl !text-[11px]">Resolves by these rules · fixed on-chain</span>
+          <p className="text-sm leading-snug text-ink">{market.criteria}</p>
+          <span className="lbl !text-[11px]">Source: {market.oracle}</span>
+        </div>
+
         <button className="btn btn-yes w-full !min-h-14 !text-base" onClick={placeBet} disabled={!open || amount < 1 || isPending}>
           {!open ? "Market closed" : isPending ? "Confirm in wallet…" : `Place bet · ${side ? "Yes" : "No"}`}
         </button>

@@ -55,6 +55,6 @@ Without contract addresses in `web/.env.local`, the app runs in demo mode with s
 
 ## Known limitations
 
-- **Admin arbitration for disputed events.** Undisputed outcomes finalize on their own, but a dispute is settled by the contract owner.
+- **Jury bribery.** Disputes go to the Kleos Court, where votes stay hidden until the reveal, but a juror can prove their vote afterward, so open bribes are possible. Random draws and reputation at stake make it costly, not impossible. Jury draws use block randomness, which block producers can nudge.
 - **Parimutuel pricing.** Thin markets move sharply with each bet. LMSR is the planned upgrade for thin markets.
 - **The anomaly flag is a heuristic, not proof of insider trading.** It holds back unvested reputation for review; it does not accuse anyone.
