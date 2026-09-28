@@ -1,0 +1,336 @@
+import { describe, it } from "node:test";
+import assert from "node:assert/strict";
+import { network } from "hardhat";
+import { keccak256, maxUint256, parseEther, parseUnits, toHex, type Address } from "viem";
+
+const { viem, networkHelpers } = await network.create();
+
+const usd = (n: number) => parseUnits(String(n), 6);
+const wad = (n: number) => parseEther(String(n));
+const DISPUTE_WINDOW = 120n;
+const VEST_PERIOD = 300n;
+const N_MIN = 10;
+const EVIDENCE = keccak256(toHex("official result page"));
+
+async function deploy() {
+  const wallets = await viem.getWalletClients();
+  const token = await viem.deployContract("KleosUSD");
+  const kleos = await viem.deployContract("Kleos", [token.address, DISPUTE_WINDOW, VEST_PERIOD, BigInt(N_MIN)]);
+  const now = BigInt(await networkHelpers.time.latest());
+  const closeTime = now + 3600n;
+  await kleos.write.createMarket([
+    "BTC closes above $120K on Oct 31?",
+    1,
+    "Chainlink BTC/USD",
+    "YES if the Chainlink BTC/USD price is above 120,000 at 23:59 UTC on Oct 31",
+    closeTime,
+  ]);
+
+  for (const w of wallets) {
+    await token.write.faucet({ account: w.account });
+    await token.write.approve([kleos.address, maxUint256], { account: w.account });
+  }
+
+  // The last wallet never bets and has earned enough reputation to resolve.
+  const resolver = wallets[wallets.length - 1];
+  await kleos.write.seedReputation([resolver.account.address, wad(5), N_MIN]);
+
+  async function resolve(outcome: boolean) {
+    await networkHelpers.time.increaseTo(closeTime);
+    await kleos.write.propose([1n, outcome, EVIDENCE, "https://example.com/result"], { account: resolver.account });
+    await networkHelpers.time.increase(DISPUTE_WINDOW);
+    await kleos.write.finalize([1n]);
+  }
+
+  async function settleAll() {
+    await kleos.write.settle([1n, await kleos.read.getBettors([1n])]);
+  }
+
+  return { wallets, token, kleos, closeTime, resolver, resolve, settleAll };
+}
+
+type Ctx = Awaited<ReturnType<typeof deploy>>;
+
+/** Ten crowd wallets set the YES price (as a %) with $1,000 total, so the market is deep enough to count. */
+async function crowdAt(ctx: Ctx, yesPct: number) {
+  const crowd = ctx.wallets.slice(1, 11);
+  for (const [i, w] of crowd.entries()) {
+    const yes = i < 5;
+    const amount = (yes ? yesPct * 10 : (100 - yesPct) * 10) / 5;
+    await ctx.kleos.write.bet([1n, yes, usd(amount)], { account: w.account });
+  }
+}
+
+const rep = async (ctx: Ctx, a: Address) => ctx.kleos.read.reputation([a]);
+const asNumber = (x: bigint) => Number(x) / 1e18;
+
+describe("multiplier", () => {
+  it("M = min(1 + 0.5·√R, 5) matches the pitch table", async () => {
+    const { kleos } = await deploy();
+    assert.equal(await kleos.read.multiplier([0n]), wad(1));
+    assert.equal(await kleos.read.multiplier([wad(4)]), wad(2));
+    assert.equal(await kleos.read.multiplier([wad(16)]), wad(3));
+    assert.equal(await kleos.read.multiplier([wad(64)]), wad(5));
+    assert.equal(await kleos.read.multiplier([wad(400)]), wad(5), "capped at 5×");
+  });
+
+  it("stays 1.0 below N_MIN resolved bets", async () => {
+    const { kleos, wallets } = await deploy();
+    const a = wallets[1].account.address;
+    await kleos.write.seedReputation([a, wad(16), N_MIN - 1]);
+    assert.equal(await kleos.read.multiplierOf([a]), wad(1));
+    await kleos.write.seedReputation([a, wad(16), N_MIN]);
+    assert.equal(await kleos.read.multiplierOf([a]), wad(3));
+  });
+});
+
+describe("pitch demo: one whale vs 20 sharps", () => {
+  it("prices, principal, bonus and conservation", async () => {
+    const ctx = await deploy();
+    const { wallets, token, kleos, resolve, settleAll } = ctx;
+    const whale = wallets[1];
+    const sharps = wallets.slice(2, 22);
+    for (const s of sharps) await kleos.write.seedReputation([s.account.address, wad(16), N_MIN]);
+
+    // Whale needs $2,000: top up with the owner's faucet money.
+    await token.write.transfer([whale.account.address, usd(1000)]);
+    await kleos.write.bet([1n, false, usd(2000)], { account: whale.account });
+    for (const s of sharps) await kleos.write.bet([1n, true, usd(80)], { account: s.account });
+
+    const [repYes, moneyYes] = await kleos.read.prices([1n]);
+    assert.equal(Math.round(Number(moneyYes) / 1e16), 44, "money only: 1,600 / 3,600");
+    assert.equal(Math.round(Number(repYes) / 1e16), 71, "reputation: 4,800 / 6,800");
+
+    await resolve(true);
+    const before = await Promise.all(sharps.map((s) => token.read.balanceOf([s.account.address])));
+    await settleAll();
+    const afterSettle = await Promise.all(sharps.map((s) => token.read.balanceOf([s.account.address])));
+
+    // Principal: $80 + (80 / 1,600) · ($2,000 − 2% fee) = $178, identical for every sharp.
+    for (let i = 0; i < sharps.length; i++) assert.equal(afterSettle[i] - before[i], usd(178));
+
+    const pay = await kleos.read.payouts([1n]);
+    assert.equal(pay[0], usd(40), "2% of the losing pool funds the bonus");
+    assert.equal(pay[3], true, "bonus opens once everyone is settled");
+
+    let bonusTotal = 0n;
+    for (const s of sharps) {
+      const b0 = await token.read.balanceOf([s.account.address]);
+      await kleos.write.claimBonus([1n, s.account.address]);
+      bonusTotal += (await token.read.balanceOf([s.account.address])) - b0;
+    }
+    // Bonuses sum to the pool (minus rounding dust); each sharp ends near $180.
+    assert.ok(usd(40) - bonusTotal < 20n, `bonus dust ${usd(40) - bonusTotal}`);
+    const leftover = await token.read.balanceOf([kleos.address]);
+    assert.ok(leftover < 40n, `money paid + fees == money staked (dust ${leftover})`);
+
+    // The whale had R = 0 and stays at 0; sharps' gains are pending until they vest.
+    assert.equal((await rep(ctx, whale.account.address)).r, 0n);
+    assert.ok((await rep(ctx, sharps[0].account.address)).pending > 0n);
+  });
+});
+
+describe("payout v2", () => {
+  it("a newcomer and a sharp get the same principal per dollar", async () => {
+    const ctx = await deploy();
+    const { wallets, token, kleos, resolve, settleAll } = ctx;
+    await crowdAt(ctx, 50);
+    const [newcomer, sharp] = [wallets[12], wallets[13]];
+    await kleos.write.seedReputation([sharp.account.address, wad(64), N_MIN]);
+    await kleos.write.bet([1n, true, usd(80)], { account: newcomer.account });
+    await kleos.write.bet([1n, true, usd(80)], { account: sharp.account });
+
+    await resolve(true);
+    const [n0, s0] = await Promise.all([newcomer, sharp].map((w) => token.read.balanceOf([w.account.address])));
+    await settleAll();
+    const [n1, s1] = await Promise.all([newcomer, sharp].map((w) => token.read.balanceOf([w.account.address])));
+    assert.equal(n1 - n0, s1 - s0);
+
+    // …but the sharp's bonus weight is ΔR · M, so it takes the larger bonus share.
+    const sharpBonus = await kleos.read.bonusOf([1n, sharp.account.address]);
+    const newcomerBonus = await kleos.read.bonusOf([1n, newcomer.account.address]);
+    assert.ok(sharpBonus > newcomerBonus);
+  });
+
+  it("sponsorship adds to the bonus pool", async () => {
+    const ctx = await deploy();
+    await crowdAt(ctx, 50);
+    await ctx.kleos.write.sponsor([1n, usd(100)], { account: ctx.wallets[20].account });
+    assert.equal((await ctx.kleos.read.payouts([1n]))[0], usd(100));
+  });
+
+  it("rolls the bonus over to the global pool when no one earns reputation", async () => {
+    const ctx = await deploy();
+    // Two bettors: too shallow for reputation, so nobody has bonus weight.
+    await ctx.kleos.write.bet([1n, true, usd(100)], { account: ctx.wallets[1].account });
+    await ctx.kleos.write.bet([1n, false, usd(100)], { account: ctx.wallets[2].account });
+    await ctx.resolve(true);
+    await ctx.settleAll();
+    assert.equal(await ctx.kleos.read.globalBonusPool(), usd(2));
+  });
+});
+
+describe("reputation update", () => {
+  async function playOne(yesPct: number, outcome: boolean) {
+    const ctx = await deploy();
+    await crowdAt(ctx, yesPct);
+    const user = ctx.wallets[12];
+    const a = user.account.address;
+    await ctx.kleos.write.seedReputation([a, wad(10), N_MIN]);
+    await ctx.kleos.write.bet([1n, true, usd(50)], { account: user.account });
+    await ctx.resolve(outcome);
+    await ctx.kleos.write.settle([1n, [a]]);
+    const r = await rep(ctx, a);
+    return { ctx, a, r, gain: asNumber(r.pending), change: asNumber(r.r) - 10 };
+  }
+
+  it("right against the crowd at 30% → +0.70, pending", async () => {
+    const { gain, change } = await playOne(30, true);
+    assert.equal(gain.toFixed(2), "0.70");
+    assert.equal(change, 0, "gains wait to vest");
+  });
+  it("right with the crowd at 95% → +0.05", async () => {
+    assert.equal((await playOne(95, true)).gain.toFixed(2), "0.05");
+  });
+  it("wrong at 30% → −0.45, immediately", async () => {
+    assert.equal((await playOne(30, false)).change.toFixed(2), "-0.45");
+  });
+  it("wrong at 95% → −1.43, immediately", async () => {
+    assert.equal((await playOne(95, false)).change.toFixed(2), "-1.43");
+  });
+
+  it("caps the gain from a single market", async () => {
+    // At 5% the uncapped gain would be 0.95.
+    assert.equal((await playOne(5, true)).gain, 0.8);
+  });
+
+  it("vests only after the vesting period", async () => {
+    const { ctx, a } = await playOne(30, true);
+    await assert.rejects(ctx.kleos.write.vest([a]));
+    await networkHelpers.time.increase(VEST_PERIOD);
+    await ctx.kleos.write.vest([a]);
+    const r = await rep(ctx, a);
+    assert.equal(asNumber(r.r).toFixed(2), "10.70");
+    assert.equal(r.pending, 0n);
+  });
+
+  it("losses beyond R come out of pending gains", async () => {
+    const ctx = await deploy();
+    await crowdAt(ctx, 30);
+    const user = ctx.wallets[12];
+    const a = user.account.address;
+    // Win $50 on YES at 30% (+0.70 pending) and lose $50 on NO at 70% (−1.05) in the same market.
+    await ctx.kleos.write.bet([1n, true, usd(50)], { account: user.account });
+    await ctx.kleos.write.bet([1n, false, usd(50)], { account: user.account });
+    await ctx.resolve(true);
+    await ctx.kleos.write.settle([1n, [a]]);
+    const r = await rep(ctx, a);
+    assert.equal(r.r, 0n);
+    assert.equal(r.pending, 0n, "the loss ate the pending gain instead of hitting the floor");
+  });
+
+  it("does not move in shallow markets", async () => {
+    const ctx = await deploy();
+    const [a, b] = [ctx.wallets[1], ctx.wallets[2]];
+    await ctx.kleos.write.bet([1n, true, usd(500)], { account: a.account });
+    await ctx.kleos.write.bet([1n, false, usd(500)], { account: b.account });
+    await ctx.resolve(true);
+    await ctx.settleAll();
+    const r = await rep(ctx, a.account.address);
+    assert.equal(r.pending, 0n);
+    assert.equal(r.resolvedBets, 0);
+  });
+});
+
+describe("anomaly flag", () => {
+  it("flags a new account that wins a big long shot, blocks vesting until cleared", async () => {
+    const ctx = await deploy();
+    await crowdAt(ctx, 5);
+    const insider = ctx.wallets[12];
+    const a = insider.account.address;
+    await ctx.kleos.write.bet([1n, true, usd(100)], { account: insider.account });
+    await ctx.resolve(true);
+    await ctx.kleos.write.settle([1n, [a]]);
+    assert.equal((await rep(ctx, a)).flagged, true);
+
+    await networkHelpers.time.increase(VEST_PERIOD);
+    await assert.rejects(ctx.kleos.write.vest([a]));
+    await ctx.kleos.write.clearFlag([a]);
+    await ctx.kleos.write.vest([a]);
+    assert.ok((await rep(ctx, a)).r > 0n);
+  });
+
+  it("admin can slash, pending first", async () => {
+    const ctx = await deploy();
+    await crowdAt(ctx, 30);
+    const u = ctx.wallets[12];
+    const a = u.account.address;
+    await ctx.kleos.write.seedReputation([a, wad(2), N_MIN]);
+    await ctx.kleos.write.bet([1n, true, usd(50)], { account: u.account });
+    await ctx.resolve(true);
+    await ctx.kleos.write.settle([1n, [a]]);
+    await ctx.kleos.write.slash([a, wad(1)]);
+    const r = await rep(ctx, a);
+    assert.equal(r.pending, 0n);
+    assert.equal(asNumber(r.r).toFixed(2), "1.70");
+  });
+});
+
+describe("markets and resolution", () => {
+  it("rejects categories that are not on the allowlist", async () => {
+    const { kleos } = await deploy();
+    await assert.rejects(kleos.write.createMarket(["Will the army move?", 9, "x", "x", 9_999_999_999n]));
+    await kleos.write.addCategory([5, "Science"]);
+    await kleos.write.createMarket(["Will the probe land?", 5, "x", "x", 9_999_999_999n]);
+  });
+
+  it("bettors and unproven accounts cannot resolve", async () => {
+    const ctx = await deploy();
+    const bettor = ctx.wallets[1];
+    await ctx.kleos.write.seedReputation([bettor.account.address, wad(10), N_MIN]);
+    await ctx.kleos.write.bet([1n, true, usd(10)], { account: bettor.account });
+    await networkHelpers.time.increaseTo(ctx.closeTime);
+    await assert.rejects(ctx.kleos.write.propose([1n, true, EVIDENCE, ""], { account: bettor.account }), /NotEligibleResolver/);
+    await assert.rejects(ctx.kleos.write.propose([1n, true, EVIDENCE, ""], { account: ctx.wallets[2].account }), /NotEligibleResolver/);
+    await ctx.kleos.write.propose([1n, true, EVIDENCE, "https://example.com"], { account: ctx.resolver.account });
+    assert.equal((await ctx.kleos.read.getMarket([1n])).evidenceHash, EVIDENCE);
+  });
+
+  it("dispute goes to arbitration and the right party takes both bonds", async () => {
+    const ctx = await deploy();
+    const disputer = ctx.wallets[2];
+    await ctx.kleos.write.seedReputation([disputer.account.address, wad(5), N_MIN]);
+    await ctx.kleos.write.bet([1n, true, usd(10)], { account: ctx.wallets[3].account });
+    await networkHelpers.time.increaseTo(ctx.closeTime);
+
+    await ctx.kleos.write.propose([1n, false, EVIDENCE, ""], { account: ctx.resolver.account });
+    await ctx.kleos.write.dispute([1n], { account: disputer.account });
+    const before = await ctx.token.read.balanceOf([disputer.account.address]);
+    await ctx.kleos.write.arbitrate([1n, true]);
+    assert.equal((await ctx.token.read.balanceOf([disputer.account.address])) - before, usd(20));
+    assert.equal((await ctx.kleos.read.getMarket([1n])).outcome, true);
+  });
+
+  it("cannot finalize while the dispute window is open", async () => {
+    const ctx = await deploy();
+    await networkHelpers.time.increaseTo(ctx.closeTime);
+    await ctx.kleos.write.propose([1n, true, EVIDENCE, ""], { account: ctx.resolver.account });
+    await assert.rejects(ctx.kleos.write.finalize([1n]));
+  });
+
+  it("rejects bets after close", async () => {
+    const ctx = await deploy();
+    await networkHelpers.time.increaseTo(ctx.closeTime);
+    await assert.rejects(ctx.kleos.write.bet([1n, true, usd(10)]));
+  });
+
+  it("boost cap trims the boost to 10% of a deep pool but never the money", async () => {
+    const { wallets, kleos } = await deploy();
+    for (const i of [1, 2, 3, 4, 5]) await kleos.write.bet([1n, i % 2 === 1, usd(1000)], { account: wallets[i].account });
+    const sharp = wallets[6].account.address;
+    await kleos.write.seedReputation([sharp, wad(64), N_MIN]); // 5×
+    const [eff] = await kleos.read.quote([1n, sharp, usd(500)]);
+    // pool $5,000 → e ≤ (500 − 0) / 0.9 ≈ $555.55, below the uncapped $2,500
+    assert.equal(eff, 555_555_555n);
+  });
+});
