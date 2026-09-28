@@ -17,6 +17,9 @@ contract KleosUSD {
 
     address public owner;
     address public sponsor;
+    /// @notice The Kleos market. It can move kUSD without a separate approval, so a new account's
+    ///         first bet is one transaction. Fine for a test token; a real stablecoin needs approvals.
+    address public market;
     uint256 public totalSupply;
     mapping(address => uint256) public balanceOf;
     mapping(address => mapping(address => uint256)) public allowance;
@@ -40,6 +43,11 @@ contract KleosUSD {
     function setSponsor(address next) external {
         if (msg.sender != owner) revert NotOwner();
         sponsor = next;
+    }
+
+    function setMarket(address next) external {
+        if (msg.sender != owner) revert NotOwner();
+        market = next;
     }
 
     /// @notice Test money for a new account, sent by the app's sponsor wallet.
@@ -69,7 +77,7 @@ contract KleosUSD {
 
     function transferFrom(address from, address to, uint256 value) external returns (bool) {
         uint256 allowed = allowance[from][msg.sender];
-        if (allowed != type(uint256).max) {
+        if (msg.sender != market && allowed != type(uint256).max) {
             if (allowed < value) revert InsufficientAllowance();
             allowance[from][msg.sender] = allowed - value;
         }

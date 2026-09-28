@@ -82,6 +82,17 @@ a:hover {
     background: var(--color-accent-hover);
     border-color: var(--color-accent-hover);
   }
+  /* A selected NO, and the NO bet button: lavender, so the two sides never look alike. */
+  .btn-no-active {
+    background: var(--color-lavender);
+    border-color: var(--color-lavender);
+    color: var(--color-ground);
+    font-weight: 500;
+  }
+  .btn-no-active:hover:not(:disabled) {
+    background: #b3aef8;
+    border-color: #b3aef8;
+  }
   .btn-no {
     background: transparent;
     color: var(--color-ink);

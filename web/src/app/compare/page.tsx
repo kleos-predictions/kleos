@@ -63,7 +63,7 @@ export default function ComparePage() {
           <h2 id="cases" className="font-dot text-[28px] font-black md:text-[36px]">THE CASES</h2>
           <p className="text-muted">Flip each case to see what changes on Kleos, and what doesn&apos;t.</p>
         </div>
-        <div className="grid gap-6 lg:grid-cols-2">
+        <div className="grid gap-6 lg:grid-cols-2 lg:gap-y-5">
           {FEATURED_CASES.map((c, i) => (
             <CaseCard key={c.id} c={c} index={i} brand={<BrandMark name={c.platform} size={20} />} />
           ))}

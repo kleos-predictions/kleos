@@ -4,6 +4,7 @@ import { multiplier } from "@/lib/math";
 import { tierOf, TIER_NAMES } from "@/lib/tiers";
 import { shortAddress } from "@/lib/chain";
 import { LaurelBadge } from "@/components/laurel";
+import { DotNumber } from "@/components/dot-number";
 
 export default function LeaderboardPage() {
   return (
@@ -34,7 +35,9 @@ export default function LeaderboardPage() {
                   </Link>
                 </td>
                 <td className="px-4 py-4 font-mono text-sm">{TIER_NAMES[tierOf(t.r)]}</td>
-                <td className="px-4 py-4 text-right font-dot text-2xl font-black text-accent">{t.r.toFixed(1)}</td>
+                <td className="px-4 py-4 text-right text-2xl text-accent">
+                  <DotNumber value={t.r.toFixed(1)} />
+                </td>
                 <td className="px-4 py-4 text-right font-mono">{multiplier(t.r).toFixed(1)}×</td>
                 <td className="px-4 py-4 text-right font-mono text-muted">
                   {t.wins} / {t.losses}

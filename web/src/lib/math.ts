@@ -62,3 +62,22 @@ export function payout(amount: number, winMoneyTotal: number, losingMoney: numbe
 export function fee(losingMoney: number): number {
   return (losingMoney * PARAMS.feeBps) / 10_000;
 }
+
+/**
+ * The math behind one recorded reputation change, rebuilt from what the event carries
+ * (entry price and delta), so anyone can check it without trusting the UI.
+ */
+export function explainChange(row: { delta: number; entryPrice: number; isBet?: boolean; marketId: number }): string {
+  const f = (n: number) => n.toFixed(2);
+  if (row.marketId === 0) return `Demo seed, published on-chain: ${row.delta >= 0 ? "+" : ""}${f(row.delta)}`;
+  if (row.isBet === false) {
+    return row.delta >= 0 ? `Juror voted with the verdict: +${f(row.delta)} (vests)` : `Juror penalty: ${f(row.delta)}`;
+  }
+  const p = row.entryPrice;
+  if (row.delta >= 0) {
+    const s = row.delta / (1 - p);
+    return `+k·s·(1 − p) = 1·${f(Math.min(s, 1))}·(1 − ${f(p)}) = +${f(row.delta)}${s > 1.0001 ? " (per-market cap)" : ""}`;
+  }
+  const s = -row.delta / (PARAMS.lambda * p);
+  return `−λ·k·s·p = ${PARAMS.lambda}·1·${f(s)}·${f(p)} = ${f(row.delta)}`;
+}

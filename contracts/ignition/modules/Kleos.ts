@@ -28,6 +28,7 @@ export default buildModule("KleosModule", (m) => {
 
   const usd = m.contract("KleosUSD");
   const kleos = m.contract("Kleos", [usd, disputeWindow, vestPeriod, nMin, courtPeriod]);
+  m.call(usd, "setMarket", [kleos]); // first bets skip the approval transaction
 
   MARKETS.forEach(([question, category, oracle, criteria, closeTime], i) => {
     m.call(kleos, "createMarket", [question, category, oracle, criteria, closeTime], { id: `market_${i + 1}` });
