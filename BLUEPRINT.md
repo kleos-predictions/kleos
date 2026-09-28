@@ -114,6 +114,15 @@ Proposals carry their proof, so anyone can check a resolution the same way they 
 
 ---
 
+## 3d. Social layer (implemented)
+
+- **Calls:** `betWithCall` attaches a public, permanent one-liner (≤ 140 bytes) to a bet via the `CallPosted` event. Written before the outcome, scored after it: opinions with receipts.
+- **Feed (`/feed`):** every call with its bet and market, filterable by All, Sharps (R ≥ 16) and Following. Resolved markets turn calls into "Called it" / "Missed" receipts.
+- **Follow:** `KleosSocial.sol`, a separate contract (`follow`, `unfollow`, `following`, `followerCount`) so social features never touch money or reputation. On-chain, so the graph follows the passkey to any device. Prompt-free inside a session.
+- **Bet buddies:** traders who won the same markets together, derived in the indexer (issue #2).
+
+---
+
 ## 4a. Envio HyperIndex (bounty: Best Use of Envio)
 
 The indexer turns contract events into the queries the app needs, so reputation stays verifiable end to end: chain → Envio → UI.
@@ -178,7 +187,9 @@ Mera is the whole account layer: sign in with a passkey, get test USD, bet. No s
 - [x] Safeguards: activation, vesting, per-market cap, minimum depth, anomaly flag, resolver gating, category allowlist (§3b)
 - [x] Resolution criteria + evidence hash and URI (§4)
 - [x] Tests for all of the above; update the pitch-number tests
-- [x] Kleos Court: jury disputes with commit-reveal and AMBIGUOUS refunds (§3c); 29 tests passing
+- [x] Kleos Court: jury disputes with commit-reveal and AMBIGUOUS refunds (§3c)
+- [x] Calls, feed and follow (§3d); 32 tests passing
+- [ ] Bet buddies in the indexer (issue #2)
 
 **App (Claude)**
 

@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import Link from "next/link";
-import { useSearchParams } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useReadContract } from "wagmi";
 import { maxUint256, parseUnits } from "viem";
 import { DEMO_R, pools, type Market } from "@/lib/data";
@@ -16,16 +16,23 @@ import { BoostGauge } from "./boost-gauge";
 import { LaurelBadge } from "./laurel";
 
 const CHIPS = [10, 50, 100];
+
+type Step = "account" | "funds" | "bet";
+const STEPS: [Step, string][] = [["account", "Account"], ["funds", "Funds"], ["bet", "Bet"]];
+type Receipt = { side: boolean; amount: number; eff: number; call: string; secs: string; tx?: string; demo?: boolean };
 const clock = () => performance.now();
 const money = (n: number) => `$${n.toLocaleString("en-US", { maximumFractionDigits: 0 })}`;
 
 export function TradePanel({ market }: { market: Market }) {
   const params = useSearchParams();
+  const router = useRouter();
   const [side, setSide] = useState<boolean>(params.get("side") !== "no");
   const [amount, setAmount] = useState(80);
   const [call, setCall] = useState("");
   const [sheetOpen, setSheetOpen] = useState(params.has("side"));
-  const [status, setStatus] = useState<{ msg: string; tx?: string } | null>(null);
+  const [step, setStep] = useState<Step | null>(null);
+  const [receipt, setReceipt] = useState<Receipt | null>(null);
+  const [error, setError] = useState<string | null>(null);
 
   const account = useKleosAccount();
   const address = account.address;
@@ -68,35 +75,49 @@ export function TradePanel({ market }: { market: Market }) {
               : `Place bet · ${side ? "Yes" : "No"}`;
 
   async function placeBet() {
+    setError(null);
+    const text = call.trim();
     if (!IS_LIVE) {
-      setStatus({ msg: `Demo mode: ${money(amount)} on ${side ? "YES" : "NO"} would count as ${money(eff)}` });
+      setReceipt({ side, amount, eff, call: text, secs: "0.0", demo: true });
       return;
     }
     const started = clock();
+    setStep("account");
     // The passkey prompt, when one is needed, has to be the first await in this click handler.
     const client = await account.authorize({ fresh: needsPrompt });
-    if (!client?.account) return;
+    if (!client?.account) {
+      setStep(null);
+      return;
+    }
     setBusy(true);
     try {
       const me = client.account;
-      if (account.funding) setStatus({ msg: "Setting up your account…" });
+      setStep("funds");
       await account.whenFunded();
 
       const value = parseUnits(String(amount), 6);
+      const balanceOf = () =>
+        publicClient.readContract({ address: USD_ADDRESS!, abi: kleosUsdAbi, functionName: "balanceOf", args: [me.address] });
+      let balance = await balanceOf();
+      if (balance < value) {
+        await account.requestFunds(); // the sponsor tops up accounts that ran low
+        balance = await balanceOf();
+      }
+      if (balance < value) {
+        throw new Error(`Not enough test USD: you have ${money(Number(balance) / 1e6)}. Try a smaller bet.`);
+      }
       const [allowance, trustedMarket] = await Promise.all([
         publicClient.readContract({ address: USD_ADDRESS!, abi: kleosUsdAbi, functionName: "allowance", args: [me.address, KLEOS_ADDRESS!] }),
         publicClient.readContract({ address: USD_ADDRESS!, abi: kleosUsdAbi, functionName: "market" }),
       ]);
       // kUSD trusts the Kleos market, so the first bet is a single transaction.
       if (trustedMarket.toLowerCase() !== KLEOS_ADDRESS!.toLowerCase() && allowance < value) {
-        setStatus({ msg: "Enabling test USD…" });
         const approveTx = await client.writeContract({
           account: me, chain, address: USD_ADDRESS!, abi: kleosUsdAbi, functionName: "approve", args: [KLEOS_ADDRESS!, maxUint256],
         });
         await publicClient.waitForTransactionReceipt({ hash: approveTx });
       }
-      setStatus({ msg: "Placing bet…" });
-      const text = call.trim();
+      setStep("bet");
       const tx = text
         ? await client.writeContract({
             account: me, chain, address: KLEOS_ADDRESS!, abi: kleosAbi, functionName: "betWithCall", args: [BigInt(market.id), side, value, text],
@@ -105,18 +126,22 @@ export function TradePanel({ market }: { market: Market }) {
             account: me, chain, address: KLEOS_ADDRESS!, abi: kleosAbi, functionName: "bet", args: [BigInt(market.id), side, value],
           });
       await publicClient.waitForTransactionReceipt({ hash: tx });
-      const secs = ((clock() - started) / 1000).toFixed(1);
-      setStatus({ msg: `Bet confirmed on Monad in ${secs}s`, tx });
+      setReceipt({ side, amount, eff, call: text, secs: ((clock() - started) / 1000).toFixed(1), tx });
       setCall("");
+      router.refresh(); // server-rendered calls and prices pick up the new bet
     } catch (e) {
-      setStatus({ msg: describeAccountError(e) });
+      setError(describeAccountError(e));
     } finally {
       setBusy(false);
+      setStep(null);
     }
   }
 
   const panel = (
     <div className="flex flex-col gap-4">
+      {receipt ? (
+        <BetReceipt receipt={receipt} address={address} onAgain={() => setReceipt(null)} />
+      ) : (
       <section className="card flex flex-col gap-5 p-6">
         <div className="grid grid-cols-2 gap-2" role="radiogroup" aria-label="Side">
           {[true, false].map((s) => (
@@ -192,21 +217,15 @@ export function TradePanel({ market }: { market: Market }) {
             {needsPrompt ? `Bets over $${PROMPT_FREE_LIMIT} ask for your passkey` : `No prompt for bets up to $${PROMPT_FREE_LIMIT} while unlocked`}
           </p>
         )}
-        {status && (
-          <p role="status" className="lbl !text-ink">
-            {status.msg}
-            {status.tx && !IS_LOCAL_CHAIN && (
-              <>
-                {" · "}
-                <a href={txUrl(status.tx)} target="_blank" rel="noreferrer" className="text-accent underline">
-                  View tx
-                </a>
-              </>
-            )}
+        {step && <BetProgress step={step} />}
+        {error && (
+          <p role="alert" className="rounded-[12px] border border-accent px-4 py-3 text-sm text-ink">
+            {error}
           </p>
         )}
         {!IS_LIVE && <p className="lbl !text-[11px]">Demo mode · sample wallet with R = {DEMO_R}</p>}
       </section>
+      )}
 
       <section className="card flex items-center gap-4 p-5">
         <LaurelBadge r={r} size={52} />
@@ -255,5 +274,65 @@ export function TradePanel({ market }: { market: Market }) {
         </div>
       )}
     </>
+  );
+}
+
+function BetProgress({ step }: { step: Step }) {
+  const at = STEPS.findIndex(([s]) => s === step);
+  return (
+    <ol className="grid grid-cols-3 gap-2" aria-label="Placing your bet" role="status">
+      {STEPS.map(([s, label], i) => (
+        <li key={s} className="flex flex-col items-center gap-2">
+          <span
+            className={`h-1.5 w-full rounded-full ${i < at ? "bg-accent" : i === at ? "animate-pulse bg-accent" : "bg-dot-off"}`}
+          />
+          <span className={`lbl !text-[11px] ${i <= at ? "!text-ink" : ""}`}>{label}</span>
+        </li>
+      ))}
+    </ol>
+  );
+}
+
+function BetReceipt({ receipt, address, onAgain }: { receipt: Receipt; address?: string; onAgain: () => void }) {
+  const color = receipt.side ? "text-accent" : "text-lavender";
+  return (
+    <section className={`card flex flex-col gap-5 border-2 p-6 ${receipt.side ? "!border-accent" : "!border-lavender"}`} role="status" aria-live="polite">
+      <div className="flex items-center justify-between">
+        <span className="lbl">{receipt.demo ? "Demo · not on-chain" : `Confirmed on Monad in ${receipt.secs}s`}</span>
+        <span className={`font-dot text-2xl font-black ${color}`}>✓</span>
+      </div>
+      <h3 className="font-dot text-[40px] leading-none font-black">BET PLACED</h3>
+      <p className="text-lg leading-snug">
+        {money(receipt.amount)} on <span className={`font-medium ${color}`}>{receipt.side ? "YES" : "NO"}</span>, counting as{" "}
+        <span className="font-medium text-accent">{money(receipt.eff)}</span> in the reputation-weighted price.
+      </p>
+      {receipt.call && (
+        <blockquote className="rounded-[12px] bg-card-alt px-4 py-3 text-[17px] leading-snug">
+          “{receipt.call}”
+          <span className="lbl mt-2 block !text-[11px]">Your call is public now and gets scored when the market resolves</span>
+        </blockquote>
+      )}
+      <div className="grid grid-cols-2 gap-2">
+        {receipt.call ? (
+          <Link href="/feed" className="btn btn-no text-center whitespace-nowrap">
+            View in feed
+          </Link>
+        ) : (
+          address && (
+            <Link href={`/profile/${address}`} className="btn btn-no text-center whitespace-nowrap">
+              My profile
+            </Link>
+          )
+        )}
+        <button className="btn btn-no whitespace-nowrap" onClick={onAgain}>
+          Bet again
+        </button>
+      </div>
+      {receipt.tx && !IS_LOCAL_CHAIN && (
+        <a href={txUrl(receipt.tx)} target="_blank" rel="noreferrer" className="lbl underline">
+          View transaction ↗
+        </a>
+      )}
+    </section>
   );
 }

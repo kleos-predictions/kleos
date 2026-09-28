@@ -31,7 +31,7 @@ export default function LeaderboardPage() {
                 <td className="px-4 py-4">
                   <Link href={`/profile/${t.address}`} className="flex items-center gap-3 font-mono">
                     <LaurelBadge r={t.r} size={32} />
-                    {shortAddress(t.address)}
+                    {t.name ? <span className="font-sans font-medium">@{t.name}</span> : shortAddress(t.address)}
                   </Link>
                 </td>
                 <td className="px-4 py-4 font-mono text-sm">{TIER_NAMES[tierOf(t.r)]}</td>

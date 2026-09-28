@@ -18,6 +18,7 @@ export const addressUrl = (address: string) => `${EXPLORER}/address/${address}`;
 /** Set these after deploying the contracts (see ../contracts). Empty = demo mode with sample data. */
 export const KLEOS_ADDRESS = process.env.NEXT_PUBLIC_KLEOS_ADDRESS as Address | undefined;
 export const USD_ADDRESS = process.env.NEXT_PUBLIC_USD_ADDRESS as Address | undefined;
+export const SOCIAL_ADDRESS = process.env.NEXT_PUBLIC_SOCIAL_ADDRESS as Address | undefined;
 export const IS_LIVE = Boolean(KLEOS_ADDRESS && USD_ADDRESS);
 
 // Monad produces a block every ~400 ms; viem's default 4 s polling would add seconds to every confirmation.

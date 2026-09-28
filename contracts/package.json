@@ -12,7 +12,8 @@
     "deploy:monad": "hardhat ignition deploy ignition/modules/Kleos.ts --network monadTestnet",
     "abi": "node scripts/export-abi.mjs",
     "node": "hardhat node",
-    "deploy:local": "hardhat ignition deploy ignition/modules/Kleos.ts --network localhost"
+    "deploy:local": "hardhat ignition deploy ignition/modules/Kleos.ts --network localhost --reset && node scripts/sync-env.mjs 31337",
+    "seed:local": "hardhat run scripts/seed-demo.ts --network localhost"
   },
   "keywords": [],
   "author": "",

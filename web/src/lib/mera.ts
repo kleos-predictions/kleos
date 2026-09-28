@@ -14,6 +14,7 @@ import {
   type Secp256k1SigningSession,
 } from "@category-labs/mera";
 import { HDKey } from "@scure/bip32";
+import { BaseError, ContractFunctionRevertedError, InsufficientFundsError, toFunctionSelector } from "viem";
 import { entropyToMnemonic, mnemonicToSeedSync } from "@scure/bip39";
 import { wordlist } from "@scure/bip39/wordlists/english.js";
 
@@ -71,7 +72,29 @@ export async function revealRecoveryPhrase(credential: PasskeyCredentialMetadata
   }
 }
 
+const CONTRACT_ERRORS: Record<string, string> = {
+  InsufficientBalance: "Not enough test USD for this bet.",
+  InsufficientAllowance: "Test USD isn't enabled for Kleos yet. Try again.",
+  MarketClosed: "This market is closed for betting.",
+  BetTooSmall: "The minimum bet is $1.",
+  CallTooLong: "Your call is over 140 characters.",
+  NotEligibleResolver: "You need tier II and no position in this market to do that.",
+  NameTaken: "That username is taken.",
+  BadName: "Usernames are 3–20 characters: a–z, 0–9 and _.",
+};
+
+// Errors raised by a contract Kleos calls into (kUSD) can't be decoded by name, so match selectors too.
+const BY_SELECTOR = Object.fromEntries(Object.keys(CONTRACT_ERRORS).map((name) => [toFunctionSelector(`${name}()`), name]));
+
+/** Turns wallet, passkey and contract failures into one sentence a person can act on. */
 export function describeAccountError(error: unknown): string {
+  if (error instanceof BaseError) {
+    const revert = error.walk((e) => e instanceof ContractFunctionRevertedError);
+    const name =
+      revert instanceof ContractFunctionRevertedError ? (revert.data?.errorName ?? (revert.signature ? BY_SELECTOR[revert.signature] : undefined)) : undefined;
+    if (name && CONTRACT_ERRORS[name]) return CONTRACT_ERRORS[name];
+    if (error.walk((e) => e instanceof InsufficientFundsError)) return "Your account is out of gas money. Refresh to top it up.";
+  }
   if (isMeraError(error)) {
     switch (error.code) {
       case "PASSKEY_OPERATION_FAILED":

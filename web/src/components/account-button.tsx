@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { useReadContract } from "wagmi";
 import { formatUnits } from "viem";
 import { IS_LIVE, KLEOS_ADDRESS, USD_ADDRESS, shortAddress } from "@/lib/chain";
@@ -27,13 +27,19 @@ function useDismiss(open: boolean, close: () => void) {
   return ref;
 }
 
+const noop = () => () => {};
+
 export function AccountButton() {
   const account = useKleosAccount();
+  // The account comes from localStorage, which the server can't see. Until this component has
+  // hydrated, render what the server rendered (signed out), then switch to the real state.
+  const hydrated = useSyncExternalStore(noop, () => true, () => false);
   const [menuOpen, setMenuOpen] = useState(false);
   const [phrase, setPhrase] = useState<string | null>(null);
   const [phraseError, setPhraseError] = useState<string | null>(null);
   const menuRef = useDismiss(menuOpen, () => setMenuOpen(false));
-  const { address, status } = account;
+  const address = account.address;
+  const status = hydrated ? account.status : "none";
 
   const { data: rep } = useReadContract({
     address: KLEOS_ADDRESS,
@@ -96,7 +102,7 @@ export function AccountButton() {
       {menuOpen && status === "unlocked" && (
         <div role="menu" className="card absolute right-0 z-50 mt-2 flex w-60 flex-col p-2">
           <Link role="menuitem" href={`/profile/${address}`} className="lbl rounded-[10px] px-3 py-3 !text-ink hover:bg-card-alt" onClick={() => setMenuOpen(false)}>
-            My reputation
+            My profile
           </Link>
           <button role="menuitem" className="lbl rounded-[10px] px-3 py-3 text-left hover:bg-card-alt" onClick={() => { setMenuOpen(false); void account.requestFunds(); }}>
             Get test USD
