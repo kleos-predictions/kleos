@@ -20,7 +20,7 @@ export function CallsList({ calls }: { calls: Call[] }) {
               <div className="flex flex-wrap items-center gap-x-3 gap-y-1 font-mono text-sm">
                 <LaurelBadge r={c.r} size={20} />
                 <Link href={`/profile/${c.address}`} className="text-ink">
-                  {shortAddress(c.address)}
+                  {c.name ? `@${c.name}` : shortAddress(c.address)}
                 </Link>
                 <span className={c.side ? "text-accent" : "text-lavender"}>{c.side ? "YES" : "NO"}</span>
                 <span className="text-muted">

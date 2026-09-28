@@ -2,13 +2,13 @@ import { smoothPath } from "@/lib/path";
 import { TIER_NAMES, TIER_THRESHOLDS } from "@/lib/tiers";
 
 const W = 800;
-const H = 240;
 const PAD = { l: 56, r: 16, t: 14, b: 30 };
 const MONTH = new Intl.DateTimeFormat("en-US", { month: "short", timeZone: "UTC" });
 const DAY = new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric", timeZone: "UTC" });
 
 /** R over time on real axes: months along the bottom, tier thresholds up the side. */
-export function ReputationChart({ points }: { points: { t: number; r: number }[] }) {
+export function ReputationChart({ points, height = 240 }: { points: { t: number; r: number }[]; height?: number }) {
+  const H = height;
   if (points.length < 2) {
     return <p className="lbl py-12 text-center">No resolved bets yet. Reputation starts moving after your first market resolves.</p>;
   }

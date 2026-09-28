@@ -3,6 +3,7 @@
 
 import { multiplier, reputationDelta } from "./math";
 import { tierOf } from "./tiers";
+import { keccak256, toHex } from "viem";
 
 export type Category = "Crypto" | "Sports" | "Tech" | "Culture";
 export type Status = "live" | "closing" | "dispute" | "resolved";
@@ -45,7 +46,7 @@ export type RepChange = {
   isBet?: boolean; // false for demo seeds and jury duty
 };
 
-export type Trader = { address: string; r: number; wins: number; losses: number };
+export type Trader = { address: string; name?: string; r: number; wins: number; losses: number };
 
 export const CATEGORIES: Category[] = ["Crypto", "Sports", "Tech", "Culture"];
 /** "Sharp" = tier IV or above. Used for the sharp-signal flag. */
@@ -207,12 +208,14 @@ function fakeTx(seed: number) {
   return hex;
 }
 
+const SAMPLE_NAMES = ["oracle_ana", "contrarian", "base_rates", "late_to_nothing", "pollster", "whale_watcher", "calm_money", "degen_no_more", "priors", "signal", "fadethecrowd"];
+
 export const TRADERS: Trader[] = [
-  { address: "0x3f1e8a4b2c9d07e6f5a1b3c8d4e2f9a07b6c9a2c", r: 41.2, wins: 58, losses: 19 },
+  { address: "0x3f1e8a4b2c9d07e6f5a1b3c8d4e2f9a07b6c9a2c", name: "kleos_maxi", r: 41.2, wins: 58, losses: 19 },
   ...Array.from({ length: 11 }, (_, i) => {
     const r = rng(100 + i);
     const rep = Math.round((36 - i * 3.2 + r() * 2) * 10) / 10;
-    return { address: fakeAddress(200 + i), r: Math.max(rep, 0.4), wins: 20 + Math.floor(r() * 40), losses: 5 + Math.floor(r() * 20) };
+    return { address: fakeAddress(200 + i), name: i % 4 === 3 ? undefined : SAMPLE_NAMES[i], r: Math.max(rep, 0.4), wins: 20 + Math.floor(r() * 40), losses: 5 + Math.floor(r() * 20) };
   }),
 ].sort((a, b) => b.r - a.r);
 
@@ -293,7 +296,7 @@ export function pools(m: Market) {
 /** Reputation used for the connected wallet in demo mode (R = 16 → 3× boost). */
 export const DEMO_R = 16;
 
-export type Call = { address: string; r: number; side: boolean; amount: number; entryPrice: number; text: string; ago: string };
+export type Call = { id: `0x${string}`; address: string; name?: string; r: number; side: boolean; amount: number; entryPrice: number; text: string; ago: string };
 
 const SAMPLE_CALLS: Record<number, string[]> = {
   1: ["ETF inflows haven't slowed in six weeks", "Halving supply shock is priced in already", "Funding rates say leverage is too crowded"],
@@ -310,7 +313,9 @@ export function sampleCalls(marketId: number): Call[] {
   return (SAMPLE_CALLS[marketId] ?? []).map((text, i) => {
     const trader = TRADERS[Math.floor(r() * TRADERS.length)];
     return {
+      id: keccak256(toHex(`sample-${marketId}-${i}`)),
       address: trader.address,
+      name: trader.name,
       r: trader.r,
       side: r() > 0.4,
       amount: [25, 50, 80, 120][Math.floor(r() * 4)],
@@ -319,4 +324,26 @@ export function sampleCalls(marketId: number): Call[] {
       ago: ["3m", "41m", "2h", "5h"][i] ?? "1d",
     };
   });
+}
+
+export type FeedItem = Call & {
+  marketId: number;
+  question: string;
+  /** Set once the market resolves: the call becomes a receipt. */
+  result: "right" | "wrong" | "refunded" | null;
+};
+
+/** Every sample call across markets, newest first (optionally one trader's). */
+export function sampleFeed(user?: string): FeedItem[] {
+  const order = (ago: string) => (ago.endsWith("m") ? 1 : ago.endsWith("h") ? 60 : 1440) * parseInt(ago);
+  return MARKETS.flatMap((m) =>
+    sampleCalls(m.id).map((c): FeedItem => ({
+      ...c,
+      marketId: m.id,
+      question: m.question,
+      result: m.proposed ? (c.side === m.proposed.outcome ? "right" : "wrong") : null,
+    })),
+  )
+    .filter((i) => !user || i.address.toLowerCase() === user.toLowerCase())
+    .sort((a, b) => order(a.ago) - order(b.ago));
 }

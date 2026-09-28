@@ -1,16 +1,19 @@
 import Link from "next/link";
 import { isAddress, type Address } from "viem";
 import { notFound } from "next/navigation";
-import { getTrader, reputationHistory, type RepChange } from "@/lib/data";
+import { getTrader, reputationHistory, sampleFeed, type FeedItem, type RepChange } from "@/lib/data";
 import { explainChange, multiplier, PARAMS } from "@/lib/math";
 import { tierOf, TIER_NAMES } from "@/lib/tiers";
 import { IS_LIVE, IS_LOCAL_CHAIN, addressUrl, shortAddress, txUrl } from "@/lib/chain";
-import { readProfile } from "@/lib/onchain";
+import { readFeed, readProfile } from "@/lib/onchain";
+import { FeedList } from "@/components/feed-list";
 import { LaurelBadge } from "@/components/laurel";
 import { DotNumber } from "@/components/dot-number";
 import { ReputationChart } from "@/components/reputation-chart";
+import { FollowButton } from "@/components/follow-button";
 
 type View = {
+  name?: string;
   r: number;
   pending: number;
   resolvedBets: number;
@@ -40,52 +43,74 @@ export default async function ProfilePage(props: PageProps<"/profile/[address]">
   if (!isAddress(address)) notFound();
 
   const v = await load(address);
+  const calls: FeedItem[] = IS_LIVE ? await readFeed(50, address).catch(() => []) : sampleFeed(address);
   const tier = tierOf(v.r);
   const activated = v.resolvedBets >= PARAMS.nMin;
   const mult = activated ? multiplier(v.r) : 1;
   const points = [...v.history].reverse().map((h) => ({ t: h.timestamp, r: h.newR }));
 
   return (
-    <main className="mx-auto flex w-full max-w-[1440px] flex-1 flex-col gap-8 px-4 pt-10 pb-12 md:px-12">
-      <section className="card flex flex-wrap items-center gap-8 p-6 md:p-8">
-        <LaurelBadge r={v.r} size={120} />
-        <div className="flex min-w-0 flex-1 flex-col gap-2">
-          <span className="lbl flex items-center gap-3">
-            Trader
-            {v.flagged && <span className="rounded-full border border-accent px-2 py-0.5 !text-accent">Under review</span>}
-          </span>
-          {IS_LOCAL_CHAIN ? (
-            <span className="truncate font-mono text-lg">{address}</span>
-          ) : (
-            <a href={addressUrl(address)} target="_blank" rel="noreferrer" className="truncate font-mono text-lg">
-              {address} ↗
-            </a>
-          )}
-          <span className="font-dot text-[44px] leading-none font-black">{tier ? `TIER ${TIER_NAMES[tier]}` : "NO TIER YET"}</span>
-          {!activated && (
-            <span className="lbl">
-              Boost unlocks after {PARAMS.nMin} resolved bets · {v.resolvedBets}/{PARAMS.nMin}
-            </span>
-          )}
+    <main className="mx-auto flex w-full max-w-[860px] flex-1 flex-col gap-6 px-4 pt-8 pb-16 md:px-0">
+      <section className="card flex flex-col gap-5 p-6">
+        <div className="flex items-start gap-5">
+          <LaurelBadge r={v.r} size={72} />
+          <div className="flex min-w-0 flex-1 flex-col gap-1.5">
+            <h1 className="truncate text-[28px] leading-tight font-medium">
+              {v.name ? `@${v.name}` : <span className="font-mono">{shortAddress(address)}</span>}
+            </h1>
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+              {/* Without a username the address is already the title; don't repeat it. */}
+              {!v.name ? null : IS_LOCAL_CHAIN ? (
+                <span className="font-mono text-sm text-muted" title={address}>
+                  {shortAddress(address)}
+                </span>
+              ) : (
+                <a href={addressUrl(address)} target="_blank" rel="noreferrer" className="font-mono text-sm text-muted" title={address}>
+                  {shortAddress(address)} ↗
+                </a>
+              )}
+              <span className="lbl !text-ink">{tier ? `Tier ${TIER_NAMES[tier]}` : "No tier yet"}</span>
+              {v.flagged && <span className="lbl rounded-full border border-accent px-2 py-0.5 !text-accent">Under review</span>}
+            </div>
+            {!activated && (
+              <span className="lbl !text-[11px]">
+                Boost unlocks after {PARAMS.nMin} resolved bets · {v.resolvedBets}/{PARAMS.nMin}
+              </span>
+            )}
+          </div>
+          <FollowButton who={address} name={v.name} />
         </div>
-        <dl className="grid grid-cols-2 gap-x-10 gap-y-4 sm:grid-cols-4">
-          <Stat label="Reputation R" value={v.r.toFixed(1)} accent note={v.pending > 0 ? `+${v.pending.toFixed(2)} vesting` : undefined} />
+
+        <dl className="flex flex-wrap gap-x-10 gap-y-3 border-t border-line pt-4">
+          <Stat label="Reputation" value={v.r.toFixed(1)} accent note={v.pending > 0 ? `+${v.pending.toFixed(2)} vesting` : undefined} />
           <Stat label="Boost" value={`${mult.toFixed(1)}×`} />
           <Stat label="Right" value={String(v.wins)} />
           <Stat label="Wrong" value={String(v.losses)} />
         </dl>
+
+        {points.length >= 2 && <ReputationChart points={points} height={150} />}
       </section>
 
-      <section className="card flex flex-col gap-4 p-6">
-        <span className="lbl">Reputation over time</span>
-        <ReputationChart points={points} />
-      </section>
-
-      <section className="card p-6">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <span className="lbl">Reputation history</span>
-          <span className="lbl">Rebuilt from ReputationChanged events · hover a change to check the math</span>
+      <section className="flex flex-col gap-4">
+        <div className="flex items-baseline justify-between px-1">
+          <h2 className="font-dot text-[24px] font-black">CALLS</h2>
+          <span className="lbl">{calls.length} public · scored when markets resolve</span>
         </div>
+        {calls.length === 0 ? (
+          <p className="card lbl p-8 text-center">No calls yet.</p>
+        ) : (
+          <FeedList items={calls} tabs={false} />
+        )}
+      </section>
+
+      <details className="card group/history p-6">
+        <summary className="flex cursor-pointer list-none flex-wrap items-center justify-between gap-3">
+          <span className="lbl !text-ink">
+            Reputation history · {v.history.length} {v.history.length === 1 ? "change" : "changes"}
+            <span className="ml-2 inline-block transition-transform group-open/history:rotate-90">›</span>
+          </span>
+          <span className="lbl">Rebuilt from on-chain events · hover a change to check the math</span>
+        </summary>
         {v.historyError && <p className="lbl mt-4 !text-accent">Couldn&apos;t load the full history from the RPC. The indexer will serve it.</p>}
         {v.history.length === 0 ? (
           <p className="lbl py-10 text-center">Nothing yet. Every change will show up here with its transaction.</p>
@@ -145,7 +170,7 @@ export default async function ProfilePage(props: PageProps<"/profile/[address]">
             </table>
           </div>
         )}
-      </section>
+      </details>
     </main>
   );
 }
@@ -154,7 +179,7 @@ function Stat({ label, value, accent = false, note }: { label: string; value: st
   return (
     <div className="flex flex-col gap-1">
       <dt className="lbl">{label}</dt>
-      <dd className={`text-[36px] leading-none ${accent ? "text-accent" : ""}`}>
+      <dd className={`text-[26px] leading-none ${accent ? "text-accent" : ""}`}>
         <DotNumber value={value} />
       </dd>
       {note && <dd className="lbl !text-[11px]">{note}</dd>}

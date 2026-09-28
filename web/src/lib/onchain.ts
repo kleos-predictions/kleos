@@ -1,16 +1,19 @@
 // Server-side reads straight from the contract. The Envio indexer replaces these for lists and
 // history (see issue #1); until then they keep live profiles honest instead of showing samples.
 
-import type { Address } from "viem";
+import { connection } from "next/server";
+import { encodeAbiParameters, keccak256, type Address } from "viem";
 import { kleosAbi } from "./abi";
-import { KLEOS_ADDRESS, publicClient } from "./chain";
-import type { Call, RepChange } from "./data";
+import { KLEOS_ADDRESS, SOCIAL_ADDRESS, publicClient } from "./chain";
+import { kleosSocialAbi } from "./abi";
+import type { Call, FeedItem, RepChange } from "./data";
 
 const WAD = 1e18;
 const DEPLOY_BLOCK = BigInt(process.env.NEXT_PUBLIC_KLEOS_DEPLOY_BLOCK ?? "0");
 const DAY = new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric", timeZone: "UTC" });
 
 export type LiveProfile = {
+  name?: string;
   r: number;
   pending: number;
   resolvedBets: number;
@@ -22,6 +25,7 @@ export type LiveProfile = {
 };
 
 export async function readProfile(user: Address): Promise<LiveProfile> {
+  await connection(); // live chain data: render per request, never at build time
   const rep = await publicClient.readContract({ address: KLEOS_ADDRESS!, abi: kleosAbi, functionName: "reputation", args: [user] });
 
   let history: RepChange[] = [];
@@ -77,7 +81,9 @@ export async function readProfile(user: Address): Promise<LiveProfile> {
   }
 
   const bets = history.filter((h) => h.isBet);
+  const name = (await readNames([user]).catch(() => new Map<string, string>())).get(user.toLowerCase());
   return {
+    name,
     r: Number(rep.r) / WAD,
     pending: Number(rep.pending) / WAD,
     resolvedBets: rep.resolvedBets,
@@ -89,34 +95,83 @@ export async function readProfile(user: Address): Promise<LiveProfile> {
   };
 }
 
-/** Latest calls on a market, straight from CallPosted events. */
-export async function readCalls(marketId: number, limit = 10): Promise<Call[]> {
+const ago = (seconds: number) => {
+  const mins = Math.max(0, Math.round(seconds / 60));
+  return mins < 60 ? `${mins}m` : mins < 1440 ? `${Math.round(mins / 60)}h` : `${Math.round(mins / 1440)}d`;
+};
+
+/** Latest calls, from CallPosted events: one market's, or every market's for the feed. */
+async function readCallLogs(marketId: number | undefined, limit: number, user?: Address) {
+  await connection(); // live chain data: render per request, never at build time
   const logs = await publicClient.getContractEvents({
     address: KLEOS_ADDRESS!,
     abi: kleosAbi,
     eventName: "CallPosted",
-    args: { marketId: BigInt(marketId) },
+    args: { ...(marketId ? { marketId: BigInt(marketId) } : {}), ...(user ? { user } : {}) },
     fromBlock: DEPLOY_BLOCK,
   });
   const latest = logs.slice(-limit).reverse();
   const now = Math.floor(Date.now() / 1000);
+  const reps = new Map<string, number>();
   return Promise.all(
     latest.map(async (log) => {
       const a = log.args;
-      const [rep, block] = await Promise.all([
-        publicClient.readContract({ address: KLEOS_ADDRESS!, abi: kleosAbi, functionName: "reputation", args: [a.user!] }),
-        publicClient.getBlock({ blockNumber: log.blockNumber }),
-      ]);
-      const mins = Math.max(0, Math.round((now - Number(block.timestamp)) / 60));
-      return {
-        address: a.user!,
-        r: Number(rep.r) / WAD,
+      const user = a.user!;
+      if (!reps.has(user)) {
+        const rep = await publicClient.readContract({ address: KLEOS_ADDRESS!, abi: kleosAbi, functionName: "reputation", args: [user] });
+        reps.set(user, Number(rep.r) / WAD);
+      }
+      const block = await publicClient.getBlock({ blockNumber: log.blockNumber });
+      const call: Call = {
+        // Same id the social contract uses for votes: keccak256(abi.encode(txHash, logIndex)).
+        id: keccak256(encodeAbiParameters([{ type: "bytes32" }, { type: "uint256" }], [log.transactionHash, BigInt(log.logIndex)])),
+        address: user,
+        r: reps.get(user)!,
         side: a.side!,
         amount: Number(a.amount!) / 1e6,
         entryPrice: Number(a.entryPrice!) / WAD,
         text: a.text!,
-        ago: mins < 60 ? `${mins}m` : mins < 1440 ? `${Math.round(mins / 60)}h` : `${Math.round(mins / 1440)}d`,
+        ago: ago(now - Number(block.timestamp)),
       };
+      return { call, marketId: Number(a.marketId!) };
     }),
   );
+}
+
+/** Usernames from the social contract, lowercased address → name. */
+export async function readNames(addresses: string[]): Promise<Map<string, string>> {
+  const unique = [...new Set(addresses.map((a) => a.toLowerCase()))] as Address[];
+  if (!SOCIAL_ADDRESS || unique.length === 0) return new Map();
+  const names = await publicClient.readContract({ address: SOCIAL_ADDRESS, abi: kleosSocialAbi, functionName: "namesOf", args: [unique] });
+  return new Map(unique.map((a, i) => [a, names[i]] as const).filter(([, n]) => n));
+}
+
+async function withNames<T extends { address: string }>(rows: T[]): Promise<(T & { name?: string })[]> {
+  const names = await readNames(rows.map((r) => r.address)).catch(() => new Map<string, string>());
+  return rows.map((r) => ({ ...r, name: names.get(r.address.toLowerCase()) }));
+}
+
+export async function readCalls(marketId: number, limit = 10): Promise<Call[]> {
+  return withNames((await readCallLogs(marketId, limit)).map((x) => x.call));
+}
+
+export async function readFeed(limit = 50, user?: Address): Promise<FeedItem[]> {
+  const rows = await readCallLogs(undefined, limit, user);
+  const markets = new Map<number, Awaited<ReturnType<typeof readMarket>>>();
+  for (const { marketId } of rows) if (!markets.has(marketId)) markets.set(marketId, await readMarket(marketId));
+  const items = rows.map(({ call, marketId }) => {
+    const m = markets.get(marketId)!;
+    const resolved = m.state === 3; // State.Resolved
+    return {
+      ...call,
+      marketId,
+      question: m.question,
+      result: !resolved ? null : m.voided ? "refunded" : call.side === m.outcome ? "right" : "wrong",
+    } as FeedItem;
+  });
+  return withNames(items);
+}
+
+function readMarket(id: number) {
+  return publicClient.readContract({ address: KLEOS_ADDRESS!, abi: kleosAbi, functionName: "getMarket", args: [BigInt(id)] });
 }

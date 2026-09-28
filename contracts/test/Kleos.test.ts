@@ -456,3 +456,57 @@ describe("Kleos Court", () => {
     assert.equal(asNumber((await rep(ctx, round2[0])).r), 40, "the one juror who voted isn't slashed");
   });
 });
+
+describe("KleosSocial", () => {
+  it("follows, counts, lists and unfollows", async () => {
+    const [a, b, c] = await viem.getWalletClients();
+    const social = await viem.deployContract("KleosSocial");
+    await social.write.follow([b.account.address], { account: a.account });
+    await social.write.follow([c.account.address], { account: a.account });
+    await social.write.follow([b.account.address], { account: a.account }); // idempotent
+    assert.equal(await social.read.followerCount([b.account.address]), 1n);
+    assert.deepEqual((await social.read.following([a.account.address])).map((x) => x.toLowerCase()), [b.account.address, c.account.address].map((x) => x.toLowerCase()));
+
+    await social.write.unfollow([b.account.address], { account: a.account });
+    assert.equal(await social.read.isFollowing([a.account.address, b.account.address]), false);
+    assert.equal(await social.read.followerCount([b.account.address]), 0n);
+    assert.deepEqual((await social.read.following([a.account.address])).map((x) => x.toLowerCase()), [c.account.address.toLowerCase()]);
+    await assert.rejects(social.write.follow([a.account.address], { account: a.account }), /CannotFollowSelf/);
+  });
+});
+
+describe("KleosSocial votes", () => {
+  it("one vote per address per call; switching and clearing adjust the tallies", async () => {
+    const [a, b] = await viem.getWalletClients();
+    const social = await viem.deployContract("KleosSocial");
+    const id = keccak256(toHex("call-1"));
+    await social.write.vote([id, 1], { account: a.account });
+    await social.write.vote([id, 1], { account: a.account }); // no double count
+    await social.write.vote([id, -1], { account: b.account });
+    let [up, down, mine] = await social.read.tallies([[id], a.account.address]);
+    assert.deepEqual([up[0], down[0], mine[0]], [1n, 1n, 1]);
+
+    await social.write.vote([id, -1], { account: a.account }); // switch
+    [up, down] = await social.read.tallies([[id], a.account.address]);
+    assert.deepEqual([up[0], down[0]], [0n, 2n]);
+
+    await social.write.vote([id, 0], { account: b.account }); // clear
+    [up, down] = await social.read.tallies([[id], a.account.address]);
+    assert.deepEqual([up[0], down[0]], [0n, 1n]);
+    await assert.rejects(social.write.vote([id, 2], { account: a.account }), /BadVote/);
+  });
+});
+
+describe("KleosSocial names", () => {
+  it("unique lowercase usernames; renaming frees the old one", async () => {
+    const [a, b] = await viem.getWalletClients();
+    const social = await viem.deployContract("KleosSocial");
+    await social.write.setName(["sharp_ana"], { account: a.account });
+    await assert.rejects(social.write.setName(["sharp_ana"], { account: b.account }), /NameTaken/);
+    await assert.rejects(social.write.setName(["Ana"], { account: b.account }), /BadName/);
+    await assert.rejects(social.write.setName(["ab"], { account: b.account }), /BadName/);
+    await social.write.setName(["ana2"], { account: a.account });
+    await social.write.setName(["sharp_ana"], { account: b.account }); // freed
+    assert.deepEqual(await social.read.namesOf([[a.account.address, b.account.address]]), ["ana2", "sharp_ana"]);
+  });
+});
