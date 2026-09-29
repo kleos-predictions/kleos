@@ -7,7 +7,7 @@
 // wallets from the deployer instead.
 import { readFileSync } from "node:fs";
 import { network } from "hardhat";
-import { encodeAbiParameters, keccak256, parseEther, parseUnits, type Address, type Hex } from "viem";
+import { encodeAbiParameters, encodeEventTopics, keccak256, parseEther, parseUnits, type Address, type Hex } from "viem";
 
 const { viem } = await network.getOrCreate();
 const publicClient = await viem.getPublicClient();
@@ -44,6 +44,8 @@ const PERSONAS: Persona[] = [
 ];
 
 const calls: { id: Hex; author: number }[] = [];
+// A call's id comes from its CallPosted log. BetPlaced in the same tx also has 3 topics, so match the event.
+const [CALL_POSTED] = encodeEventTopics({ abi: kleos.abi, eventName: "CallPosted" });
 
 for (const [i, p] of PERSONAS.entries()) {
   const w = wallets[i];
@@ -61,7 +63,7 @@ for (const [i, p] of PERSONAS.entries()) {
       : await kleos.write.bet([BigInt(marketId), side, usdAmount(amount)], { account: w.account });
     const receipt = await publicClient.waitForTransactionReceipt({ hash });
     if (text) {
-      const log = receipt.logs.find((l) => l.address.toLowerCase() === kleos.address.toLowerCase() && l.topics.length === 3)!;
+      const log = receipt.logs.find((l) => l.address.toLowerCase() === kleos.address.toLowerCase() && l.topics[0] === CALL_POSTED)!;
       calls.push({ id: keccak256(encodeAbiParameters([{ type: "bytes32" }, { type: "uint256" }], [hash, BigInt(log.logIndex!)])), author: i });
     }
   }
