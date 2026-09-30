@@ -597,3 +597,166 @@ describe("market creation", () => {
     assert.equal((await ctx.token.read.balanceOf([creator.account.address])) - before, usd(25));
   });
 });
+
+describe("review fixes (pre-deploy)", () => {
+  async function poolOf(ctx: Ctx, count: number, from = 18) {
+    const jurors = ctx.wallets.slice(from, from + count);
+    for (const j of jurors) {
+      await ctx.kleos.write.seedReputation([j.account.address, wad(40), N_MIN]);
+      await ctx.kleos.write.joinCourt({ account: j.account });
+    }
+    return jurors;
+  }
+  async function proposedYes(ctx: Ctx) {
+    await ctx.kleos.write.bet([1n, true, usd(10)], { account: ctx.wallets[3].account });
+    await ctx.kleos.write.bet([1n, false, usd(10)], { account: ctx.wallets[4].account });
+    await networkHelpers.time.increaseTo(ctx.closeTime);
+    await ctx.kleos.write.propose([1n, true, EVIDENCE, ""], { account: ctx.resolver.account });
+  }
+
+  it("a dispute needs enough eligible jurors: a loser can't void a market for free", async () => {
+    const ctx = await deploy();
+    await proposedYes(ctx);
+    await assert.rejects(ctx.kleos.write.dispute([1n], { account: ctx.wallets[4].account }), /NotEnoughJurors/);
+    await poolOf(ctx, 2);
+    await assert.rejects(ctx.kleos.write.dispute([1n], { account: ctx.wallets[4].account }), /NotEnoughJurors/);
+    await networkHelpers.time.increase(DISPUTE_WINDOW);
+    await ctx.kleos.write.finalize([1n]); // the proposal stands
+    assert.equal((await ctx.kleos.read.getMarket([1n])).outcome, true);
+  });
+
+  it("a redraw falls back to earlier jurors, so a 5-juror pool can still reach a verdict", async () => {
+    const ctx = await deploy();
+    const jurors = await poolOf(ctx, 5);
+    await proposedYes(ctx);
+    await ctx.kleos.write.dispute([1n], { account: ctx.wallets[4].account });
+    const c1 = await ctx.kleos.read.getCourt([1n]);
+    await networkHelpers.time.increaseTo(c1.revealEnd);
+    await ctx.kleos.write.closeCourt([1n]); // nobody voted: redraw
+    const round2 = await ctx.kleos.read.getJury([1n, 2]);
+    assert.equal(round2.length, 5, "round 2 is seated from round-1 jurors");
+    const c2 = await ctx.kleos.read.getCourt([1n]);
+    const byAddress = new Map(jurors.map((w) => [w.account.address.toLowerCase(), w]));
+    for (const [i, j] of round2.slice(0, 3).entries()) {
+      const salt = keccak256(toHex(`r2-${i}`));
+      await ctx.kleos.write.commitVote([1n, await ctx.kleos.read.voteCommitment([1n, 2, j, 1, salt])], { account: byAddress.get(j.toLowerCase())!.account });
+    }
+    await networkHelpers.time.increaseTo(c2.commitEnd);
+    for (const [i, j] of round2.slice(0, 3).entries()) {
+      await ctx.kleos.write.revealVote([1n, 1, keccak256(toHex(`r2-${i}`))], { account: byAddress.get(j.toLowerCase())!.account });
+    }
+    await networkHelpers.time.increaseTo(c2.revealEnd);
+    await ctx.kleos.write.closeCourt([1n]);
+    const m = await ctx.kleos.read.getMarket([1n]);
+    assert.equal(m.voided, false);
+    assert.equal(m.outcome, true);
+  });
+
+  it("a juror who commits but withholds the reveal is penalized even when quorum is met", async () => {
+    const ctx = await deploy();
+    const jurors = await poolOf(ctx, 5);
+    await proposedYes(ctx);
+    await ctx.kleos.write.dispute([1n], { account: ctx.wallets[4].account });
+    const court = await ctx.kleos.read.getCourt([1n]);
+    const jury = await ctx.kleos.read.getJury([1n, 1]);
+    const byAddress = new Map(jurors.map((w) => [w.account.address.toLowerCase(), w]));
+    for (const [i, j] of jury.slice(0, 4).entries()) {
+      const salt = keccak256(toHex(`w-${i}`));
+      await ctx.kleos.write.commitVote([1n, await ctx.kleos.read.voteCommitment([1n, 1, j, 1, salt])], { account: byAddress.get(j.toLowerCase())!.account });
+    }
+    await networkHelpers.time.increaseTo(court.commitEnd);
+    for (const [i, j] of jury.slice(0, 3).entries()) {
+      await ctx.kleos.write.revealVote([1n, 1, keccak256(toHex(`w-${i}`))], { account: byAddress.get(j.toLowerCase())!.account });
+    }
+    await networkHelpers.time.increaseTo(court.revealEnd);
+    await ctx.kleos.write.closeCourt([1n]);
+    assert.equal(asNumber((await rep(ctx, jury[3])).r), 39.7, "withheld reveal: −0.3");
+    assert.equal(asNumber((await rep(ctx, jury[4])).r), 40, "never committed: no penalty");
+  });
+
+  it("the team can propose on its own markets, and unresolved markets expire into refunds", async () => {
+    const ctx = await deploy();
+    await ctx.kleos.write.bet([1n, true, usd(10)], { account: ctx.wallets[3].account });
+    await networkHelpers.time.increaseTo(ctx.closeTime);
+    await assert.rejects(ctx.kleos.write.expire([1n]), /NotExpired/);
+    await networkHelpers.time.increase(20n * DISPUTE_WINDOW);
+    const before = await ctx.token.read.balanceOf([ctx.wallets[3].account.address]);
+    await ctx.kleos.write.expire([1n]);
+    await ctx.settleAll();
+    assert.equal((await ctx.token.read.balanceOf([ctx.wallets[3].account.address])) - before, usd(10));
+
+    // Owner (the creator of every team market) can still propose.
+    const now = BigInt(await networkHelpers.time.latest());
+    await ctx.kleos.write.createMarket(["Team market?", 1, "o", "c", now + 100n]);
+    await networkHelpers.time.increase(101);
+    await ctx.kleos.write.propose([2n, true, EVIDENCE, ""]);
+  });
+
+  it("entry prices are clamped: betting into an empty side still risks reputation", async () => {
+    const ctx = await deploy();
+    for (const w of ctx.wallets.slice(1, 11)) await ctx.kleos.write.bet([1n, false, usd(100)], { account: w.account });
+    const u = ctx.wallets[12];
+    await ctx.kleos.write.seedReputation([u.account.address, wad(10), N_MIN]);
+    await ctx.kleos.write.bet([1n, true, usd(50)], { account: u.account });
+    await ctx.resolve(false);
+    await ctx.kleos.write.settle([1n, [u.account.address]]);
+    assert.equal(asNumber((await rep(ctx, u.account.address)).r).toFixed(3), "9.925", "−1.5 · 0.05");
+  });
+
+  it("the anomaly flag catches $50 long shots, and flagged or hedged winners get no bonus", async () => {
+    const ctx = await deploy();
+    await crowdAt(ctx, 5);
+    const [insider, hedger] = [ctx.wallets[12], ctx.wallets[13]];
+    await ctx.kleos.write.bet([1n, true, usd(50)], { account: insider.account });
+    await ctx.kleos.write.seedReputation([hedger.account.address, wad(36), N_MIN]);
+    await ctx.kleos.write.bet([1n, true, usd(50)], { account: hedger.account });
+    await ctx.kleos.write.bet([1n, false, usd(50)], { account: hedger.account });
+    await ctx.resolve(true);
+    await ctx.kleos.write.settle([1n, [insider.account.address, hedger.account.address]]);
+    assert.equal((await rep(ctx, insider.account.address)).flagged, true);
+    assert.equal(await ctx.kleos.read.bonusWeight([1n, insider.account.address]), 0n, "flagged: no bonus");
+    // Hedger: +0.8 capped on YES at ~5%, −1.5·~0.95 on NO → net negative, no bonus.
+    assert.equal(await ctx.kleos.read.bonusWeight([1n, hedger.account.address]), 0n, "net-negative hedge: no bonus");
+  });
+
+  it("activation only counts positions of at least $50", async () => {
+    const ctx = await deploy();
+    await crowdAt(ctx, 50);
+    const [small, full] = [ctx.wallets[12], ctx.wallets[13]];
+    await ctx.kleos.write.bet([1n, true, usd(1)], { account: small.account });
+    await ctx.kleos.write.bet([1n, true, usd(50)], { account: full.account });
+    await ctx.resolve(true);
+    await ctx.kleos.write.settle([1n, [small.account.address, full.account.address]]);
+    assert.equal((await rep(ctx, small.account.address)).resolvedBets, 0);
+    assert.equal((await rep(ctx, full.account.address)).resolvedBets, 1);
+  });
+
+  it("the boost cap applies to a big bet that makes the pool deep", async () => {
+    const { wallets, kleos } = await deploy();
+    const whale = wallets[6];
+    await kleos.write.seedReputation([whale.account.address, wad(64), N_MIN]); // 5×
+    await kleos.write.bet([1n, false, usd(100)], { account: wallets[1].account });
+    const [eff] = await kleos.read.quote([1n, whale.account.address, usd(10_000)]);
+    assert.equal(eff, usd(10_000), "boost trimmed to the stake, not 5×");
+  });
+
+  it("owner and sponsor guards", async () => {
+    const ctx = await deploy();
+    await assert.rejects(ctx.kleos.write.transferOwnership(["0x0000000000000000000000000000000000000000"]), /ZeroAddress/);
+    await assert.rejects(ctx.kleos.write.withdrawRevenue(["0x0000000000000000000000000000000000000000"]), /ZeroAddress/);
+    await assert.rejects(ctx.kleos.write.seedReputation([ctx.wallets[1].account.address, wad(2_000_000), 0]), /BadState/);
+    await proposedYes(ctx);
+    await networkHelpers.time.increase(DISPUTE_WINDOW);
+    await ctx.kleos.write.finalize([1n]);
+    await assert.rejects(ctx.kleos.write.sponsor([1n, usd(5)], { account: ctx.wallets[5].account }), /BadState/);
+  });
+
+  it("anyone can prune a juror who no longer qualifies", async () => {
+    const ctx = await deploy();
+    const [j] = await poolOf(ctx, 1);
+    await assert.rejects(ctx.kleos.write.pruneJuror([j.account.address]), /NotEligibleJuror/);
+    await ctx.kleos.write.slash([j.account.address, wad(10)]);
+    await ctx.kleos.write.pruneJuror([j.account.address], { account: ctx.wallets[5].account });
+    assert.equal((await ctx.kleos.read.jurorPool()).length, 0);
+  });
+});

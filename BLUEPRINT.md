@@ -49,7 +49,7 @@ Money pays money. Reputation steers the signal and earns a fee-funded bonus.
 - **Displayed odds** stay reputation-weighted (`P_rep`), shown next to the payout odds implied by money. The UI must say which number sets the payout ("pays 2.25×").
 - **Fees:** `FEE_BPS` (2%) of the losing pool goes to that market's `bonusPool`; `PROTOCOL_FEE_BPS` (1%) accrues as protocol revenue, which the owner withdraws to the treasury (`RevenueAccrued`, `RevenueWithdrawn` events). No fees when nobody picked the winner.
 - **Sponsorship:** `sponsor(marketId, amount)` adds to `bonusPool`; the market page shows "Sponsored by [address]". It is neutral: the bonus pays accurate contrarians on either side.
-- **Bonus:** `bonus_i = bonusPool · w_i / Σw`, with `w_i = ΔR_i · M_i` for winners whose ΔR is positive. Weighting by M (not ΔR alone) stops a whale from splitting into many fresh $50 wallets to capture the bonus.
+- **Bonus:** `bonus_i = bonusPool · w_i / Σw`, with `w_i` = the trader's **net** ΔR in the market (gain minus loss, so hedges earn nothing) × the multiplier their winning bets carried at bet time. Weighting by M (not ΔR alone) stops a whale from splitting into many fresh $50 wallets to capture the bonus.
 - **Two-phase settlement:** Σw is only known once every bettor is settled. Phase 1 settles principal and ΔR; phase 2 opens bonus claims.
 - **Rollover:** if no one has positive ΔR, `bonusPool` moves to a global pool that seeds the bonus of new markets.
 - **Tests:** newcomer and sharp get the same principal return per dollar; money paid + fees = money staked; bonuses sum to `bonusPool`; the split-wallet attack gains no bonus advantage.
@@ -62,10 +62,11 @@ Demo check: $2,000 losing pool → $40 bonus (2%) and $20 protocol revenue (1%).
 
 | Safeguard | Rule | Default |
 |---|---|---|
-| Activation | M stays 1.0 until the user has `N_MIN` resolved bets; a handful of bets is mostly luck | `N_MIN = 10` |
+| Activation | M stays 1.0 until the user has `N_MIN` resolved positions of at least $50; a handful of bets is mostly luck | `N_MIN = 10` |
+| Entry price clamp | Entry prices are clamped to 5–95%, so betting into an empty side still risks reputation | 5% |
 | Vesting | Positive ΔR goes to `pendingR` with a `vestAt`; anyone calls `vest(user)` after it (emits `Vested`). Negative ΔR applies immediately. M uses vested R only | 7 days (5 min in demo) |
 | Per-market cap | Positive ΔR from one market ≤ `DELTA_R_MAX` | 0.8 (keeps the +0.70 pitch example intact) |
-| Anomaly flag | Fewer than `N_MIN` resolved bets **and** a win at entry price ≤ `FLAG_PRICE` with size ≥ `FLAG_SIZE` → flagged (emits `Flagged`). Flagged pendingR cannot vest. Admin can `clearFlag` or `slash`. Profile shows "Under review" | `FLAG_PRICE = 0.10` |
+| Anomaly flag | Fewer than `N_MIN` resolved bets **and** a win at entry price ≤ `FLAG_PRICE` with size ≥ `FLAG_SIZE` ($50, where the stake factor is full) → flagged, and no bonus while flagged (emits `Flagged`). Flagged pendingR cannot vest. Admin can `clearFlag` or `slash`. Profile shows "Under review" | `FLAG_PRICE = 0.10` |
 | Blocked topics | `createMarket` rejects blocked categories | military operations, internal government decisions |
 | Minimum depth | ΔR only counts in markets with pool ≥ `MIN_REP_POOL` and ≥ `MIN_BETTORS` distinct addresses | $1,000 · 10 |
 | Resolver gating | Proposing and disputing require vested R ≥ a threshold; addresses with a position in the market cannot propose or dispute it | tier II |
@@ -106,12 +107,15 @@ Disputes are judged by reputation, not by the platform or token holders.
 | Who can dispute | Anyone except the proposer, bettors included. One dispute per market |
 | Dispute bond | $15: if the jury upholds the proposal, it's split among the majority jurors |
 | Jury pool | Opt-in (`joinCourt`) for tier V: vested R ≥ 36, 10+ resolved bets, not flagged |
-| Draw | 5 jurors per round, with no position in the market, never the proposer or disputer; a redraw excludes the previous jury |
+| Draw | 5 jurors per round, with no position in the market, never the proposer, disputer or creator. A redraw prefers fresh jurors and falls back to earlier ones. The draw scans at most 120 pool slots, and anyone can prune members who no longer qualify |
+| Minimum jury | A dispute needs at least 3 eligible jurors; otherwise it reverts and the proposal stands, so a loser can't void a market for free |
 | Voting | Commit a hidden vote, then reveal. Options: YES, NO, AMBIGUOUS |
 | Verdict | 3 matching votes. YES/NO resolves the market; AMBIGUOUS voids it and refunds everyone |
 | No verdict | One redraw. If the second round also fails, the market is voided and refunded |
 | Juror incentives | With the verdict: +0.3 R (vests), plus a share of the losing bond. Against: −0.3 R |
 | No-shows | Penalized −1.0 R **only** when their round lacked quorum and the market ended up refunded. If the market still closes, a no-show costs nothing |
+| Withheld reveals | A juror who commits and then doesn't reveal loses 0.3 R even when quorum is met |
+| Expiry | A closed market nobody proposes on can be voided by anyone after 20 dispute windows (full refunds). The team can always propose on any market it has no position in |
 | Bonds | Proposal upheld: proposer refunded, disputer's $15 pays the jury. Overturned: disputer gets $15 + the proposer's $10. AMBIGUOUS or failed court: both refunded |
 
 **Known limits:** jurors can prove their vote after the reveal, so open bribes are possible (costly, not impossible). The draw uses block randomness, which block producers can nudge. The demo seeds a transparent jury pool (marketId 0 events).

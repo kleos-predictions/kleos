@@ -27,7 +27,7 @@ export function boostFraction(m: number): number {
 /** E = m · M, with the boost trimmed so one address stays under 10% of a deep pool. */
 export function effectiveBet(amount: number, m: number, pool = 0, userEff = 0): number {
   const eff = amount * m;
-  if (eff <= amount || pool < PARAMS.boostCapMinPool) return eff;
+  if (eff <= amount || pool + amount < PARAMS.boostCapMinPool) return eff; // depth judged after the bet, as on-chain
   const bound = Math.max((PARAMS.boostCap * pool - userEff) / (1 - PARAMS.boostCap), amount);
   return Math.min(eff, bound);
 }
@@ -81,9 +81,10 @@ export function explainChange(row: { delta: number; entryPrice: number; isBet?: 
   }
   const p = row.entryPrice;
   if (row.delta >= 0) {
-    const s = row.delta / (1 - p);
-    return `+k·s·(1 − p) = 1·${f(Math.min(s, 1))}·(1 − ${f(p)}) = +${f(row.delta)}${s > 1.0001 ? " (per-market cap)" : ""}`;
+    // The event carries the applied gain: at the per-market cap it no longer reveals s.
+    if (row.delta >= PARAMS.deltaRMax - 1e-9) return `+k·s·(1 − p), capped per market at +${f(PARAMS.deltaRMax)} (entry p = ${f(p)})`;
+    return `+k·s·(1 − p) = 1·${f(row.delta / (1 - p))}·(1 − ${f(p)}) = +${f(row.delta)}`;
   }
-  const s = -row.delta / (PARAMS.lambda * p);
-  return `−λ·k·s·p = ${PARAMS.lambda}·1·${f(s)}·${f(p)} = ${f(row.delta)}`;
+  // The event carries what was taken, which is less than the full loss when R hit its floor of 0.
+  return `−λ·k·s·p at entry p = ${f(p)}: ${f(row.delta)} taken (never below R = 0)`;
 }

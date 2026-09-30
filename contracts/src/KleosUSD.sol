@@ -27,9 +27,12 @@ contract KleosUSD {
 
     event Transfer(address indexed from, address indexed to, uint256 value);
     event Approval(address indexed owner, address indexed spender, uint256 value);
+    event SponsorSet(address indexed sponsor);
+    event MarketSet(address indexed market);
 
     error FaucetCooldown(uint256 availableAt);
     error NotOwner();
+    error ZeroAddress();
     error NotSponsor();
     error MintTooLarge();
     error InsufficientBalance();
@@ -42,12 +45,18 @@ contract KleosUSD {
 
     function setSponsor(address next) external {
         if (msg.sender != owner) revert NotOwner();
+        if (next == address(0)) revert ZeroAddress();
         sponsor = next;
+        emit SponsorSet(next);
     }
 
+    /// @dev Test token only: the market can move any holder's kUSD without an allowance. Kleos only
+    ///      ever pulls from msg.sender, so that shortcut can't be pointed at someone else's balance.
     function setMarket(address next) external {
         if (msg.sender != owner) revert NotOwner();
+        if (next == address(0)) revert ZeroAddress();
         market = next;
+        emit MarketSet(next);
     }
 
     /// @notice Test money for a new account, sent by the app's sponsor wallet.
