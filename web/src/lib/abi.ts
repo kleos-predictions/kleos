@@ -99,6 +99,16 @@ export const kleosAbi = [
   },
   {
     "inputs": [],
+    "name": "NotEnoughJurors",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "NotExpired",
+    "type": "error"
+  },
+  {
+    "inputs": [],
     "name": "NotJuror",
     "type": "error"
   },
@@ -135,6 +145,11 @@ export const kleosAbi = [
   {
     "inputs": [],
     "name": "WindowOpen",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "ZeroAddress",
     "type": "error"
   },
   {
@@ -448,6 +463,19 @@ export const kleosAbi = [
     "inputs": [
       {
         "indexed": true,
+        "internalType": "address",
+        "name": "juror",
+        "type": "address"
+      }
+    ],
+    "name": "JurorPruned",
+    "type": "event"
+  },
+  {
+    "anonymous": false,
+    "inputs": [
+      {
+        "indexed": true,
         "internalType": "uint256",
         "name": "marketId",
         "type": "uint256"
@@ -515,6 +543,19 @@ export const kleosAbi = [
       }
     ],
     "name": "MarketCreated",
+    "type": "event"
+  },
+  {
+    "anonymous": false,
+    "inputs": [
+      {
+        "indexed": true,
+        "internalType": "uint256",
+        "name": "marketId",
+        "type": "uint256"
+      }
+    ],
+    "name": "MarketExpired",
     "type": "event"
   },
   {
@@ -609,6 +650,25 @@ export const kleosAbi = [
       }
     ],
     "name": "OutcomeProposed",
+    "type": "event"
+  },
+  {
+    "anonymous": false,
+    "inputs": [
+      {
+        "indexed": true,
+        "internalType": "address",
+        "name": "previous",
+        "type": "address"
+      },
+      {
+        "indexed": true,
+        "internalType": "address",
+        "name": "next",
+        "type": "address"
+      }
+    ],
+    "name": "OwnershipTransferred",
     "type": "event"
   },
   {
@@ -1030,6 +1090,19 @@ export const kleosAbi = [
   },
   {
     "inputs": [],
+    "name": "EXPIRY_WINDOWS",
+    "outputs": [
+      {
+        "internalType": "uint256",
+        "name": "",
+        "type": "uint256"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [],
     "name": "FEE_BPS",
     "outputs": [
       {
@@ -1160,7 +1233,33 @@ export const kleosAbi = [
   },
   {
     "inputs": [],
+    "name": "MAX_DRAW_PROBES",
+    "outputs": [
+      {
+        "internalType": "uint256",
+        "name": "",
+        "type": "uint256"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [],
     "name": "MAX_ROUNDS",
+    "outputs": [
+      {
+        "internalType": "uint256",
+        "name": "",
+        "type": "uint256"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "MAX_SEED_R",
     "outputs": [
       {
         "internalType": "uint256",
@@ -1187,6 +1286,19 @@ export const kleosAbi = [
   {
     "inputs": [],
     "name": "MIN_BETTORS",
+    "outputs": [
+      {
+        "internalType": "uint256",
+        "name": "",
+        "type": "uint256"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "MIN_ENTRY_PRICE",
     "outputs": [
       {
         "internalType": "uint256",
@@ -1665,6 +1777,19 @@ export const kleosAbi = [
       }
     ],
     "name": "dispute",
+    "outputs": [],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "uint256",
+        "name": "id",
+        "type": "uint256"
+      }
+    ],
+    "name": "expire",
     "outputs": [],
     "stateMutability": "nonpayable",
     "type": "function"
@@ -2179,6 +2304,19 @@ export const kleosAbi = [
   {
     "inputs": [
       {
+        "internalType": "address",
+        "name": "juror",
+        "type": "address"
+      }
+    ],
+    "name": "pruneJuror",
+    "outputs": [],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
         "internalType": "uint256",
         "name": "id",
         "type": "uint256"
@@ -2545,6 +2683,11 @@ export const kleosUsdAbi = [
     "type": "error"
   },
   {
+    "inputs": [],
+    "name": "ZeroAddress",
+    "type": "error"
+  },
+  {
     "anonymous": false,
     "inputs": [
       {
@@ -2567,6 +2710,32 @@ export const kleosUsdAbi = [
       }
     ],
     "name": "Approval",
+    "type": "event"
+  },
+  {
+    "anonymous": false,
+    "inputs": [
+      {
+        "indexed": true,
+        "internalType": "address",
+        "name": "market",
+        "type": "address"
+      }
+    ],
+    "name": "MarketSet",
+    "type": "event"
+  },
+  {
+    "anonymous": false,
+    "inputs": [
+      {
+        "indexed": true,
+        "internalType": "address",
+        "name": "sponsor",
+        "type": "address"
+      }
+    ],
+    "name": "SponsorSet",
     "type": "event"
   },
   {

@@ -101,7 +101,7 @@ const EVIDENCE = [
 ];
 
 const SAFEGUARDS = [
-  ["Activation", "Boost stays 1.0× until 10 resolved bets. A handful of bets is mostly luck."],
+  ["Activation", "Boost stays 1.0× until 10 resolved positions of at least $50. A handful of bets is mostly luck."],
   ["Money pays money", "Payouts split the losing pool by money, so reputation can't be rented out. A 2% fee funds a bonus for winners who gained reputation; 1% is protocol revenue."],
   ["Vesting", "Gains vest over 7 days; losses apply immediately. The boost uses vested reputation only."],
   ["Per-market cap", "Reputation gained from any single market is capped at +0.8."],

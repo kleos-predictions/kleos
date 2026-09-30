@@ -82,6 +82,9 @@ const CONTRACT_ERRORS: Record<string, string> = {
   NotEligibleCreator: "Creating markets takes tier V (R ≥ 36).",
   BadCloseTime: "The close time has to be in the future.",
   NameTaken: "That username is taken.",
+  NotEnoughJurors: "Not enough eligible jurors to hear a dispute right now, so the proposal stands.",
+  NotExpired: "This market can be voided only after its expiry.",
+  ZeroAddress: "That address can't be the zero address.",
   BadName: "Usernames are 3–20 characters: a–z, 0–9 and _.",
 };
 

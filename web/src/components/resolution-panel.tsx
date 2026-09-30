@@ -23,12 +23,13 @@ type Snapshot = Awaited<ReturnType<typeof readSnapshot>>;
 
 async function readSnapshot(id: bigint, me: Address | undefined) {
   const k = { address: KLEOS_ADDRESS!, abi: kleosAbi } as const;
-  const [market, court, disputeWindow, courtPeriod, payout] = await Promise.all([
+  const [market, court, disputeWindow, courtPeriod, payout, owner] = await Promise.all([
     publicClient.readContract({ ...k, functionName: "getMarket", args: [id] }),
     publicClient.readContract({ ...k, functionName: "getCourt", args: [id] }),
     publicClient.readContract({ ...k, functionName: "DISPUTE_WINDOW" }),
     publicClient.readContract({ ...k, functionName: "COURT_PERIOD" }),
     publicClient.readContract({ ...k, functionName: "payouts", args: [id] }),
+    publicClient.readContract({ ...k, functionName: "owner" }),
   ]);
   const jury = court.round > 0 ? await publicClient.readContract({ ...k, functionName: "getJury", args: [id, court.round] }) : [];
   const [names, juryVotes, juryCommits] = await Promise.all([
@@ -50,6 +51,7 @@ async function readSnapshot(id: bigint, me: Address | undefined) {
     market,
     court,
     disputeWindow: Number(disputeWindow),
+    isOwner: Boolean(me && owner.toLowerCase() === me.toLowerCase()),
     courtPeriod: Number(courtPeriod),
     bonusOpen: payout[3],
     jury: jury.map((address, i) => ({ address, name: names[i] || undefined, vote: juryVotes[i], committed: juryCommits[i] !== `0x${"0".repeat(64)}` })),
@@ -143,7 +145,11 @@ export function ResolutionPanel({ marketId, oracle }: { marketId: number; oracle
   const closed = now >= Number(m.closeTime);
   const windowEnds = Number(m.proposedAt) + snap.disputeWindow;
   const iAmJuror = snap.jury.find((j) => j.address.toLowerCase() === me);
-  const canResolve = snap.me.r >= 4 && !snap.me.flagged && !snap.me.hasBet;
+  // Mirrors Kleos._requireResolver: the team can always propose; traders need tier II, no position,
+  // no flag, and can't resolve a market they created.
+  const isCreator = m.creator.toLowerCase() === me;
+  const canResolve = !snap.me.hasBet && (snap.isOwner || (snap.me.r >= 4 && !snap.me.flagged && !isCreator));
+  const expiresAt = Number(m.closeTime) + 20 * snap.disputeWindow; // EXPIRY_WINDOWS
   const isProposer = m.proposer.toLowerCase() === me;
 
   const stage =
@@ -203,9 +209,15 @@ export function ResolutionPanel({ marketId, oracle }: { marketId: number; oracle
             </>
           ) : (
             <p className="text-sm text-muted">
-              {snap.me.hasBet ? "You have a position in this market, so you can't resolve it." : "Proposing needs tier II (R ≥ 4) and no position here."}
+              {snap.me.hasBet
+                ? "You have a position in this market, so you can't resolve it."
+                : isCreator
+                  ? "You created this market, so someone else resolves it."
+                  : "Proposing needs tier II (R ≥ 4) and no position here."}
             </p>
           )}
+          {now >= expiresAt &&
+            btn("Void: nobody proposed", () => act("Void: nobody proposed", false, (c) => write(c, "expire", [id])), "btn-no")}
         </div>
       )}
 
@@ -244,7 +256,7 @@ export function ResolutionPanel({ marketId, oracle }: { marketId: number; oracle
             </span>
           </div>
           <p className="text-sm text-muted">
-            Proposed <span className="text-ink">{outcomeText(m.proposedOutcome)}</span>, disputed. Five tier-V jurors with no position vote in secret;
+            Proposed <span className="text-ink">{outcomeText(m.proposedOutcome)}</span>, disputed. {snap.jury.length} tier-V jurors with no position vote in secret;
             3 matching votes decide.
           </p>
           <ul className="grid grid-cols-1 gap-2 sm:grid-cols-5">
@@ -322,8 +334,12 @@ export function ResolutionPanel({ marketId, oracle }: { marketId: number; oracle
             {!snap.bonusOpen &&
               btn("Settle everyone", () =>
                 act("Settle everyone", false, async (c) => {
+                  // Batches of 100 keep each transaction well under the block gas limit.
                   const bettors = await publicClient.readContract({ address: KLEOS_ADDRESS!, abi: kleosAbi, functionName: "getBettors", args: [id] });
-                  return write(c, "settle", [id, bettors]);
+                  for (let i = 0; i < bettors.length; i += 100) {
+                    const hash = await write(c, "settle", [id, bettors.slice(i, i + 100)]);
+                    await publicClient.waitForTransactionReceipt({ hash });
+                  }
                 }),
               )}
             {snap.bonusOpen && snap.me.bonus > 0n && !snap.me.bonusClaimed &&

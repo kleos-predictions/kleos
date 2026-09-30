@@ -47,7 +47,9 @@ contract Kleos {
     uint256 public constant MIN_REP_POOL = 1_000e6; // reputation only moves in markets this deep…
     uint256 public constant MIN_BETTORS = 10; // …with at least this many distinct bettors
     uint256 public constant FLAG_PRICE = 0.1e18; // long-shot threshold for the anomaly flag
-    uint256 public constant FLAG_SIZE = 100e6; // size threshold for the anomaly flag
+    uint256 public constant FLAG_SIZE = 50e6; // size threshold for the anomaly flag (= STAKE_REF, where s is full)
+    uint256 public constant MIN_ENTRY_PRICE = 0.05e18; // entry prices are clamped to [5%, 95%]: no risk-free side
+    uint256 public constant MAX_SEED_R = 1_000_000e18; // keeps seeded reputation far from overflow
     uint256 public constant RESOLVER_MIN_R = 4e18; // tier II to propose
     uint256 public constant CREATOR_MIN_R = 36e18; // tier V (or the team) to create markets
     uint256 public constant CREATION_BOND = 25e6; // back on a clean resolution, lost if the court rules AMBIGUOUS
@@ -62,6 +64,8 @@ contract Kleos {
     uint256 public constant JUROR_REWARD = 0.3e18; // voting with the verdict (vests)
     uint256 public constant JUROR_PENALTY = 0.3e18; // voting against it
     uint256 public constant NO_SHOW_PENALTY = 1e18; // only when missing votes forced a refund
+    uint256 public constant MAX_DRAW_PROBES = 120; // bounds the jury draw's gas however big the pool grows
+    uint256 public constant EXPIRY_WINDOWS = 20; // a closed market nobody proposes on can be voided after 20 dispute windows
     uint8 public constant VOTE_YES = 1;
     uint8 public constant VOTE_NO = 2;
     uint8 public constant VOTE_AMBIGUOUS = 3;
@@ -212,6 +216,9 @@ contract Kleos {
     event Flagged(address indexed user, uint256 indexed marketId);
     event FlagCleared(address indexed user);
     event Slashed(address indexed user, uint256 amount);
+    event OwnershipTransferred(address indexed previous, address indexed next);
+    event MarketExpired(uint256 indexed marketId);
+    event JurorPruned(address indexed juror);
 
     // ─── Errors ────────────────────────────────────────────────────────────────
     error NotOwner();
@@ -228,6 +235,9 @@ contract Kleos {
     error NotEligibleJuror();
     error NotJuror();
     error BadVote();
+    error NotEnoughJurors();
+    error NotExpired();
+    error ZeroAddress();
     error CallTooLong();
     error NothingToVest();
     error StillVesting();
@@ -292,6 +302,7 @@ contract Kleos {
 
     /// @notice Demo-only starting state. Emitted as a public ReputationChanged with marketId 0.
     function seedReputation(address user, uint256 r, uint32 resolvedBets) external onlyOwner {
+        if (r > MAX_SEED_R) revert BadState();
         Rep storage rep = _rep[user];
         int256 delta = int256(r) - int256(rep.r);
         rep.r = r;
@@ -316,6 +327,7 @@ contract Kleos {
 
     /// @notice Sends accrued protocol revenue to the treasury.
     function withdrawRevenue(address to) external onlyOwner {
+        if (to == address(0)) revert ZeroAddress();
         uint256 amount = protocolRevenue;
         protocolRevenue = 0;
         _push(to, amount);
@@ -331,6 +343,8 @@ contract Kleos {
     }
 
     function transferOwnership(address next) external onlyOwner {
+        if (next == address(0)) revert ZeroAddress();
+        emit OwnershipTransferred(owner, next);
         owner = next;
     }
 
@@ -368,7 +382,7 @@ contract Kleos {
 
         Market storage m = _markets[id];
         uint256 pool = m.yesEff + m.noEff;
-        if (pool < BOOST_CAP_MIN_POOL) return (eff, mult);
+        if (pool + amount < BOOST_CAP_MIN_POOL) return (eff, mult);
 
         // userEff + e ≤ cap·(pool + e)  →  e ≤ (cap·pool − userEff) / (1 − cap)
         uint256 userEff = positions[id][user][true].eff + positions[id][user][false].eff;
@@ -398,6 +412,9 @@ contract Kleos {
 
         (uint256 repYes,) = prices(id);
         entryPrice = yes ? repYes : WAD - repYes;
+        // An empty side would price at 0, making a loss cost nothing: clamp so every bet carries risk.
+        if (entryPrice < MIN_ENTRY_PRICE) entryPrice = MIN_ENTRY_PRICE;
+        if (entryPrice > WAD - MIN_ENTRY_PRICE) entryPrice = WAD - MIN_ENTRY_PRICE;
         (uint256 eff, uint256 mult) = quote(id, msg.sender, amount);
 
         Position storage pos = positions[id][msg.sender][yes];
@@ -424,7 +441,7 @@ contract Kleos {
     /// @notice Anyone can add to a market's bonus. It pays accurate contrarians on either side,
     ///         so sponsoring buys attention, not an outcome.
     function sponsor(uint256 id, uint256 amount) external {
-        if (id == 0 || id > marketCount || payouts[id].bonusOpen) revert BadState();
+        if (id == 0 || id > marketCount || _markets[id].state == State.Resolved) revert BadState();
         _pull(msg.sender, amount);
         payouts[id].bonusPool += amount;
         emit Sponsored(id, msg.sender, amount);
@@ -459,7 +476,21 @@ contract Kleos {
         m.state = State.Disputed;
         m.disputer = msg.sender;
         emit OutcomeDisputed(id, msg.sender);
-        _drawJury(id, m);
+        // Without enough eligible jurors a dispute could only end in a free void, so it isn't allowed:
+        // the proposal stands and finalizes after its window.
+        if (_drawJury(id, m) < QUORUM) revert NotEnoughJurors();
+    }
+
+    /// @notice A closed market nobody proposed on is voided after EXPIRY_WINDOWS dispute windows,
+    ///         so stakes can never be locked forever. Anyone can call it.
+    function expire(uint256 id) external {
+        if (id == 0 || id > marketCount) revert BadState();
+        Market storage m = _markets[id];
+        if (m.state != State.Open) revert BadState();
+        if (block.timestamp < m.closeTime + EXPIRY_WINDOWS * DISPUTE_WINDOW) revert NotExpired();
+        _void(id, m);
+        _releaseCreatorBond(id, m, false);
+        emit MarketExpired(id);
     }
 
     function finalize(uint256 id) external {
@@ -470,12 +501,14 @@ contract Kleos {
         _push(m.proposer, BOND);
     }
 
-    /// @dev Resolvers need earned reputation and no stake in the market they judge.
+    /// @dev Resolvers need earned reputation and no stake in the market they judge, and a trader
+    ///      never resolves a market they created. The team can always propose (still disputable),
+    ///      so a market never waits on a resolver who doesn't exist.
     function _requireResolver(uint256 id) internal view {
+        if (hasBet[id][msg.sender]) revert NotEligibleResolver();
+        if (msg.sender == owner) return;
         Rep storage rep = _rep[msg.sender];
-        if (hasBet[id][msg.sender] || rep.flagged || rep.r < RESOLVER_MIN_R || msg.sender == _markets[id].creator) {
-            revert NotEligibleResolver();
-        }
+        if (rep.flagged || rep.r < RESOLVER_MIN_R || msg.sender == _markets[id].creator) revert NotEligibleResolver();
     }
 
     function _resolve(uint256 id, bool outcome) internal {
@@ -524,17 +557,15 @@ contract Kleos {
     function leaveCourt() external {
         uint256 slot = _poolSlot[msg.sender];
         if (slot == 0) return;
-        address last = _jurorPool[_jurorPool.length - 1];
-        _jurorPool[slot - 1] = last;
-        _poolSlot[last] = slot;
-        _jurorPool.pop();
-        delete _poolSlot[msg.sender];
+        _removeFromPool(msg.sender, slot);
         emit JurorLeft(msg.sender);
     }
 
-    /// @dev Draws up to JURY_SIZE eligible jurors. On-chain randomness can be nudged by block
-    ///      producers; acceptable on testnet, and listed as a known limitation.
-    function _drawJury(uint256 id, Market storage m) internal {
+    /// @dev Draws up to JURY_SIZE eligible jurors and returns how many. Bounded to MAX_DRAW_PROBES
+    ///      pool slots. A redraw prefers fresh jurors and falls back to earlier rounds' jurors if
+    ///      there aren't enough, so small pools can still reach a verdict. On-chain randomness can
+    ///      be nudged by block producers; acceptable on testnet, and a known limitation.
+    function _drawJury(uint256 id, Market storage m) internal returns (uint256) {
         Court storage c = _courts[id];
         c.round++;
         c.revealed = 0;
@@ -544,21 +575,48 @@ contract Kleos {
 
         address[] storage jury = _jury[id][c.round];
         uint256 n = _jurorPool.length;
-        uint256 seed = uint256(keccak256(abi.encode(block.prevrandao, blockhash(block.number - 1), id, c.round)));
-        // Random probes first, then a sweep so a small pool still fills the jury.
-        for (uint256 i; i < 3 * n + n && jury.length < JURY_SIZE; ++i) {
-            uint256 idx = i < 3 * n ? uint256(keccak256(abi.encode(seed, i))) % n : (seed + i) % n;
-            address j = _jurorPool[idx];
-            if (_eligibleJuror(id, m, c.round, j)) jury.push(j);
+        if (n > 0) {
+            uint256 seed = uint256(keccak256(abi.encode(block.prevrandao, blockhash(block.number - 1), id, c.round)));
+            uint256 probes = n < MAX_DRAW_PROBES ? n : MAX_DRAW_PROBES;
+            // Two passes over a random walk of the pool: fresh jurors first, then anyone eligible.
+            for (uint256 pass; pass < 2 && jury.length < JURY_SIZE; ++pass) {
+                uint256 start = uint256(keccak256(abi.encode(seed, pass))) % n;
+                for (uint256 i; i < probes && jury.length < JURY_SIZE; ++i) {
+                    address j = _jurorPool[(start + i) % n];
+                    if (_eligibleJuror(id, m, c.round, j, pass == 1)) jury.push(j);
+                }
+            }
         }
         emit JuryDrawn(id, c.round, jury);
+        return jury.length;
     }
 
-    function _eligibleJuror(uint256 id, Market storage m, uint8 round, address j) internal view returns (bool) {
+    function _eligibleJuror(uint256 id, Market storage m, uint8 round, address j, bool allowEarlier)
+        internal
+        view
+        returns (bool)
+    {
         Rep storage rep = _rep[j];
         if (rep.r < JUROR_MIN_R || rep.flagged || hasBet[id][j] || j == m.proposer || j == m.disputer || j == m.creator) return false;
         if (_onJury(id, round, j)) return false; // already drawn this round
-        return round == 1 || !_onJury(id, round - 1, j); // a redraw brings fresh eyes
+        return allowEarlier || round == 1 || !_onJury(id, round - 1, j); // a redraw prefers fresh eyes
+    }
+
+    /// @notice Anyone can remove a pool member who no longer qualifies (flagged or R below tier V).
+    function pruneJuror(address juror) external {
+        uint256 slot = _poolSlot[juror];
+        Rep storage rep = _rep[juror];
+        if (slot == 0 || (rep.r >= JUROR_MIN_R && !rep.flagged)) revert NotEligibleJuror();
+        _removeFromPool(juror, slot);
+        emit JurorPruned(juror);
+    }
+
+    function _removeFromPool(address juror, uint256 slot) internal {
+        address last = _jurorPool[_jurorPool.length - 1];
+        _jurorPool[slot - 1] = last;
+        _poolSlot[last] = slot;
+        _jurorPool.pop();
+        delete _poolSlot[juror];
     }
 
     function _onJury(uint256 id, uint8 round, address j) internal view returns (bool) {
@@ -650,8 +708,15 @@ contract Kleos {
         for (uint256 i; i < jury.length; ++i) {
             address j = jury[i];
             uint8 vote = votes[id][round][j];
-            if (vote == 0) continue; // quorum was met, so a no-show costs nothing
             Rep storage rep = _rep[j];
+            if (vote == 0) {
+                // Quorum was met, so simply not showing up costs nothing. But committing and then
+                // withholding the reveal (e.g. after seeing the tally turn) costs a wrong vote's penalty.
+                if (commitments[id][round][j] == 0) continue;
+                uint256 withheld = _takeReputation(rep, JUROR_PENALTY);
+                emit ReputationChanged(j, id, -int256(withheld), rep.r, rep.pending, 0, false, false);
+                continue;
+            }
             if (vote == verdict) {
                 rep.pending += JUROR_REWARD;
                 rep.vestAt = uint64(block.timestamp + VEST_PERIOD);
@@ -725,22 +790,7 @@ contract Kleos {
             payout = win.money + (win.money * distributable) / winMoney;
         }
 
-        uint256 weight;
-        if (_countsForReputation(id, m)) {
-            Rep storage rep = _rep[user];
-            uint256 mult = multiplierOf(user); // before this market's update
-            bool firstBets = rep.resolvedBets < N_MIN;
-            if (win.money > 0) {
-                uint256 gain = _applyGain(user, id, rep, win, outcome);
-                weight = (gain * mult) / WAD;
-                if (firstBets && !rep.flagged && win.money >= FLAG_SIZE && win.priceSum / win.money <= FLAG_PRICE) {
-                    rep.flagged = true;
-                    emit Flagged(user, id);
-                }
-            }
-            if (lose.money > 0) _applyLoss(user, id, rep, lose, !outcome, outcome);
-            rep.resolvedBets++;
-        }
+        uint256 weight = _countsForReputation(id, m) ? _settleReputation(id, user, win, lose, outcome) : 0;
 
         if (weight > 0) {
             bonusWeight[id][user] = weight;
@@ -748,6 +798,31 @@ contract Kleos {
         }
         if (payout > 0) _push(user, payout);
         emit Settled(id, user, payout, weight);
+    }
+
+    /// @dev Applies this market's reputation changes and returns the user's bonus weight.
+    function _settleReputation(uint256 id, address user, Position storage win, Position storage lose, bool outcome)
+        internal
+        returns (uint256 weight)
+    {
+        Rep storage rep = _rep[user];
+        bool firstBets = rep.resolvedBets < N_MIN;
+        uint256 gain;
+        uint256 loss;
+        if (win.money > 0) {
+            gain = _applyGain(user, id, rep, win, outcome);
+            if (firstBets && !rep.flagged && win.money >= FLAG_SIZE && win.priceSum / win.money <= FLAG_PRICE) {
+                rep.flagged = true;
+                emit Flagged(user, id);
+            }
+        }
+        if (lose.money > 0) loss = _applyLoss(user, id, rep, lose, !outcome, outcome);
+        // Bonus weight: net ΔR in this market (a hedge that lost reputation earns nothing), times the
+        // multiplier the winning bets actually carried (fixed at bet time, so settle order can't game it).
+        // Flagged accounts earn no bonus while under review.
+        if (gain > loss && !rep.flagged) weight = ((gain - loss) * ((win.eff * WAD) / win.money)) / WAD;
+        // Only full-size positions count toward activation, so it can't be bought with $1 bets.
+        if (win.money + lose.money >= STAKE_REF) rep.resolvedBets++;
     }
 
     /// @dev Shallow markets can't move reputation, so it can't be farmed against your own wallets.
@@ -773,11 +848,13 @@ contract Kleos {
         emit ReputationChanged(user, id, int256(gain), rep.r, rep.pending, p, outcome, outcome);
     }
 
+    /// @return loss the full loss owed (what was actually taken can be less, at the R floor)
     function _applyLoss(address user, uint256 id, Rep storage rep, Position storage pos, bool side, bool outcome)
         internal
+        returns (uint256 loss)
     {
         uint256 p = pos.priceSum / pos.money;
-        uint256 loss = (((LAMBDA * ((K * _stakeFactor(pos.money)) / WAD)) / WAD) * p) / WAD;
+        loss = (((LAMBDA * ((K * _stakeFactor(pos.money)) / WAD)) / WAD) * p) / WAD;
         uint256 taken = _takeReputation(rep, loss);
         emit ReputationChanged(user, id, -int256(taken), rep.r, rep.pending, p, side, outcome);
     }
