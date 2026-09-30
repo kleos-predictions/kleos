@@ -47,14 +47,14 @@ Money pays money. Reputation steers the signal and earns a fee-funded bonus.
 
 - **Principal payout:** pure parimutuel by money. `payout_i = m_i + (m_i / ΣwinningMoney) · (losingPool − fee)`
 - **Displayed odds** stay reputation-weighted (`P_rep`), shown next to the payout odds implied by money. The UI must say which number sets the payout ("pays 2.25×").
-- **Fee:** `FEE_BPS` (default 200 = 2%) of the losing pool goes to that market's `bonusPool`.
+- **Fees:** `FEE_BPS` (2%) of the losing pool goes to that market's `bonusPool`; `PROTOCOL_FEE_BPS` (1%) accrues as protocol revenue, which the owner withdraws to the treasury (`RevenueAccrued`, `RevenueWithdrawn` events). No fees when nobody picked the winner.
 - **Sponsorship:** `sponsor(marketId, amount)` adds to `bonusPool`; the market page shows "Sponsored by [address]". It is neutral: the bonus pays accurate contrarians on either side.
 - **Bonus:** `bonus_i = bonusPool · w_i / Σw`, with `w_i = ΔR_i · M_i` for winners whose ΔR is positive. Weighting by M (not ΔR alone) stops a whale from splitting into many fresh $50 wallets to capture the bonus.
 - **Two-phase settlement:** Σw is only known once every bettor is settled. Phase 1 settles principal and ΔR; phase 2 opens bonus claims.
 - **Rollover:** if no one has positive ΔR, `bonusPool` moves to a global pool that seeds the bonus of new markets.
 - **Tests:** newcomer and sharp get the same principal return per dollar; money paid + fees = money staked; bonuses sum to `bonusPool`; the split-wallet attack gains no bonus advantage.
 
-Demo check: $2,000 losing pool, 2% fee → $40 bonus. Each of 20 identical sharps gets $80 + $98 + $2 = **$180**, the same number as in the pitch.
+Demo check: $2,000 losing pool → $40 bonus (2%) and $20 protocol revenue (1%). Each of 20 identical sharps gets $80 + $97 + $2 = **$179**.
 
 ---
 
@@ -80,6 +80,20 @@ Demo check: $2,000 losing pool, 2% fee → $40 bonus. Each of 20 identical sharp
 6. **The 10% cap is on the boost.** It limits the extra weight an address gains from reputation; money always counts in full. The 11-wallet case is answered mainly by the reputation-weighted price itself: fresh wallets carry 1× weight.
 
 **Tests:** multiplier stays 1.0 below `N_MIN`; gains vest only after the period; losses apply immediately, including against pending gains; the per-market cap holds; flagged users cannot vest; blocked categories revert; position holders cannot propose or dispute; shallow markets produce no ΔR.
+
+---
+
+## 3b-2. Market creation (implemented)
+
+| Rule | Value |
+|---|---|
+| Who creates | The team (free, curated) and tier-V traders (R ≥ 36, not flagged) |
+| Cost | $25 bond + $2 fee (protocol revenue) |
+| Bond | Back when the market resolves YES/NO or the court fails for lack of quorum; forfeited to the global bonus pool if the court rules AMBIGUOUS |
+| Conflicts | The creator can't propose the outcome or be drawn as a juror on their own market |
+| Required | Question, category from the allowlist, source of truth, resolution criteria, a future close time |
+
+Benchmark: Polymarket and Kalshi curate markets in-house; Augur let anyone create with a bond; Manifold lets creators resolve their own markets. Kleos opens creation to proven forecasters and separates writing a question from judging it.
 
 ---
 
@@ -183,7 +197,7 @@ Mera is the whole account layer: sign in with a passkey, get test USD, bet. No s
 
 **Contracts (Claude)**
 
-- [x] Payout v2: money parimutuel, 2% fee → bonus pool, sponsor(), bonus by ΔR·M, two-phase settlement (§3a)
+- [x] Payout v2: money parimutuel, 2% fee → bonus pool, 1% protocol revenue, sponsor(), bonus by ΔR·M, two-phase settlement (§3a)
 - [x] Safeguards: activation, vesting, per-market cap, minimum depth, anomaly flag, resolver gating, category allowlist (§3b)
 - [x] Resolution criteria + evidence hash and URI (§4)
 - [x] Tests for all of the above; update the pitch-number tests

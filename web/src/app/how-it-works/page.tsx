@@ -38,16 +38,17 @@ const STACK = [
   ["Accounts", "Mera passkeys: no wallet, no extension, no seed phrase. The account is derived from the passkey on any device; nothing secret is stored. Gas and test USD are sponsored, so a first bet is one transaction"],
   ["Sessions", "Prompt-free while unlocked: bets up to $100, follows, votes, settling. The passkey is asked again for bigger bets, bonds, jury votes and the recovery phrase. 15 idle minutes lock the account"],
   ["Verifiability", "ReputationChanged(user, marketId, delta, newR, entryPrice, side, outcome) on every update"],
+  ["Market creation", "The team, or any tier-V trader (R ≥ 36) with a $25 bond plus a $2 fee. The bond comes back on a clean resolution and is lost if the court rules the question ambiguous. Creators can't propose the outcome or sit on the jury"],
   ["Resolution", "Propose with a $10 bond → dispute window → finalize. A dispute ($15 bond) goes to the Kleos Court: 5 jurors, commit-reveal votes, 3 of 5 decide"],
   ["Jury secrets", "A juror's hidden vote is salted with a deterministic passkey signature, so it can be revealed from any device with nothing stored"],
   ["Social", "Calls: a public 140-character reason attached to a bet, scored when the market resolves. Feed, follows, usernames and ▲▼ votes live on-chain"],
   ["Settlement", "Permissionless: anyone can settle any trader, so losses land even if the loser never comes back"],
   ["Frontend", "Next.js · wagmi / viem · formulas mirrored client-side so every preview matches the contract"],
-  ["Tests", "Hardhat · 34 tests; the pitch numbers (44% vs 71%, $180 payout, +0.70 / −1.43) are asserted against the contract"],
+  ["Tests", "Hardhat · 34 tests; the pitch numbers (44% vs 71%, $177 + bonus payout, +0.70 / −1.43) are asserted against the contract"],
 ];
 
 const EVENTS = [
-  "MarketCreated", "BetPlaced", "CallPosted", "OutcomeProposed", "OutcomeDisputed", "JuryDrawn", "VoteRevealed", "Verdict",
+  "MarketCreated", "BetPlaced", "RevenueAccrued", "CallPosted", "OutcomeProposed", "OutcomeDisputed", "JuryDrawn", "VoteRevealed", "Verdict",
   "MarketResolved", "Settled", "ReputationChanged", "Followed", "CallVoted", "NameSet",
 ];
 
@@ -101,7 +102,7 @@ const EVIDENCE = [
 
 const SAFEGUARDS = [
   ["Activation", "Boost stays 1.0× until 10 resolved bets. A handful of bets is mostly luck."],
-  ["Money pays money", "Payouts split the losing pool by money, so reputation can't be rented out. A 2% fee funds a bonus for winners who gained reputation."],
+  ["Money pays money", "Payouts split the losing pool by money, so reputation can't be rented out. A 2% fee funds a bonus for winners who gained reputation; 1% is protocol revenue."],
   ["Vesting", "Gains vest over 7 days; losses apply immediately. The boost uses vested reputation only."],
   ["Per-market cap", "Reputation gained from any single market is capped at +0.8."],
   ["Minimum depth", "Reputation only moves in markets deep enough that you can't farm it against your own wallets."],
@@ -251,6 +252,8 @@ export default function HowItWorks() {
                 ["Full stake at", `$${PARAMS.stakeRef}`],
                 ["Boost cap", `${PARAMS.boostCap * 100}%`],
                 ["Fee → bonus", `${PARAMS.feeBps / 100}%`],
+                ["Protocol fee", `${PARAMS.protocolFeeBps / 100}%`],
+                ["Creation", "$25 bond + $2 fee"],
                 ["Max ΔR / market", PARAMS.deltaRMax],
                 ["Activation", `${PARAMS.nMin} bets`],
               ].map(([k, v]) => (

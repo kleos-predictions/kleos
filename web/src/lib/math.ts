@@ -8,7 +8,8 @@ export const PARAMS = {
   stakeRef: 50,
   boostCap: 0.1,
   boostCapMinPool: 5_000,
-  feeBps: 200,
+  feeBps: 200, // bonus for winners who beat the market
+  protocolFeeBps: 100, // protocol revenue
   deltaRMax: 0.8,
   nMin: 10,
 } as const;
@@ -53,9 +54,14 @@ export function reputationFormula(won: boolean, p: number, amount: number): stri
     : `−λ·k·s·p = ${PARAMS.lambda}·${PARAMS.k}·${f(s)}·${f(p)} = ${f(d)}`;
 }
 
-/** Money pays money: payout = m + (m / ΣwinningMoney) · (L − fee). */
+/** Money pays money: payout = m + (m / ΣwinningMoney) · (L − bonus fee − protocol fee). */
 export function payout(amount: number, winMoneyTotal: number, losingMoney: number): number {
-  return amount + (amount / winMoneyTotal) * losingMoney * (1 - PARAMS.feeBps / 10_000);
+  return amount + (amount / winMoneyTotal) * losingMoney * (1 - (PARAMS.feeBps + PARAMS.protocolFeeBps) / 10_000);
+}
+
+/** Protocol revenue from a market's losing pool. */
+export function protocolFee(losingMoney: number): number {
+  return (losingMoney * PARAMS.protocolFeeBps) / 10_000;
 }
 
 /** The fee that funds the market's bonus pool. */

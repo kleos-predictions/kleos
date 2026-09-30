@@ -16,7 +16,7 @@ npm test
 ```
 
 - Add or update a test in `contracts/test/Kleos.test.ts` for every behavior change. Match the existing style: one `describe` per mechanism, `it` names that state the rule, and exact pitch numbers asserted with `assert.equal`.
-- The pitch numbers are part of the product (44% vs 71%, $178 principal, $40 bonus, +0.70 / +0.05 / −0.45 / −1.43). If a change moves them, say so explicitly: the README, BLUEPRINT and demo script quote them.
+- The pitch numbers are part of the product (44% vs 71%, $177 principal, $40 bonus, $20 protocol revenue, +0.70 / +0.05 / −0.45 / −1.43). If a change moves them, say so explicitly: the README, BLUEPRINT and demo script quote them.
 
 ## 2. Regenerate the ABI
 
@@ -35,7 +35,7 @@ For a new contract, add it to the list in `contracts/scripts/export-abi.mjs` and
 | Tier thresholds, `RESOLVER_MIN_R`, `JUROR_MIN_R` | `web/src/lib/tiers.ts` and the copy that names tiers |
 | A custom error users can hit | `CONTRACT_ERRORS` in `web/src/lib/mera.ts` (plain-language message) |
 | An event or its fields | `web/src/lib/onchain.ts` readers, the indexer's `config.yaml` and handlers (see `envio-indexer`) |
-| Bonds, windows, fees quoted in copy ($10 / $15, 2%, 7 days) | `web/src/app/market/[id]/page.tsx`, `web/src/app/how-it-works/page.tsx`, `web/src/lib/cases.ts` |
+| Bonds, windows, fees quoted in copy ($10 / $15 / $25 + $2, 2% + 1%, 7 days) | `web/src/app/market/[id]/page.tsx`, `web/src/app/how-it-works/page.tsx`, `web/src/lib/cases.ts` |
 
 Then build the web app so type errors from the new ABI surface:
 

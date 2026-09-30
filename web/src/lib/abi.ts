@@ -44,6 +44,11 @@ export const kleosAbi = [
   },
   {
     "inputs": [],
+    "name": "BadCloseTime",
+    "type": "error"
+  },
+  {
+    "inputs": [],
     "name": "BadState",
     "type": "error"
   },
@@ -75,6 +80,11 @@ export const kleosAbi = [
   {
     "inputs": [],
     "name": "MarketNotClosed",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "NotEligibleCreator",
     "type": "error"
   },
   {
@@ -343,6 +353,37 @@ export const kleosAbi = [
     "inputs": [
       {
         "indexed": true,
+        "internalType": "uint256",
+        "name": "marketId",
+        "type": "uint256"
+      },
+      {
+        "indexed": true,
+        "internalType": "address",
+        "name": "creator",
+        "type": "address"
+      },
+      {
+        "indexed": false,
+        "internalType": "uint256",
+        "name": "amount",
+        "type": "uint256"
+      },
+      {
+        "indexed": false,
+        "internalType": "bool",
+        "name": "forfeited",
+        "type": "bool"
+      }
+    ],
+    "name": "CreatorBondReleased",
+    "type": "event"
+  },
+  {
+    "anonymous": false,
+    "inputs": [
+      {
+        "indexed": true,
         "internalType": "address",
         "name": "user",
         "type": "address"
@@ -429,6 +470,12 @@ export const kleosAbi = [
         "internalType": "uint256",
         "name": "marketId",
         "type": "uint256"
+      },
+      {
+        "indexed": true,
+        "internalType": "address",
+        "name": "creator",
+        "type": "address"
       },
       {
         "indexed": false,
@@ -611,6 +658,44 @@ export const kleosAbi = [
       }
     ],
     "name": "ReputationChanged",
+    "type": "event"
+  },
+  {
+    "anonymous": false,
+    "inputs": [
+      {
+        "indexed": true,
+        "internalType": "uint256",
+        "name": "marketId",
+        "type": "uint256"
+      },
+      {
+        "indexed": false,
+        "internalType": "uint256",
+        "name": "amount",
+        "type": "uint256"
+      }
+    ],
+    "name": "RevenueAccrued",
+    "type": "event"
+  },
+  {
+    "anonymous": false,
+    "inputs": [
+      {
+        "indexed": true,
+        "internalType": "address",
+        "name": "to",
+        "type": "address"
+      },
+      {
+        "indexed": false,
+        "internalType": "uint256",
+        "name": "amount",
+        "type": "uint256"
+      }
+    ],
+    "name": "RevenueWithdrawn",
     "type": "event"
   },
   {
@@ -849,6 +934,45 @@ export const kleosAbi = [
   {
     "inputs": [],
     "name": "COURT_PERIOD",
+    "outputs": [
+      {
+        "internalType": "uint256",
+        "name": "",
+        "type": "uint256"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "CREATION_BOND",
+    "outputs": [
+      {
+        "internalType": "uint256",
+        "name": "",
+        "type": "uint256"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "CREATION_FEE",
+    "outputs": [
+      {
+        "internalType": "uint256",
+        "name": "",
+        "type": "uint256"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "CREATOR_MIN_R",
     "outputs": [
       {
         "internalType": "uint256",
@@ -1109,6 +1233,19 @@ export const kleosAbi = [
   {
     "inputs": [],
     "name": "N_MIN",
+    "outputs": [
+      {
+        "internalType": "uint256",
+        "name": "",
+        "type": "uint256"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "PROTOCOL_FEE_BPS",
     "outputs": [
       {
         "internalType": "uint256",
@@ -1706,6 +1843,16 @@ export const kleosAbi = [
             "type": "address"
           },
           {
+            "internalType": "address",
+            "name": "creator",
+            "type": "address"
+          },
+          {
+            "internalType": "uint256",
+            "name": "creatorBond",
+            "type": "uint256"
+          },
+          {
             "internalType": "bytes32",
             "name": "evidenceHash",
             "type": "bytes32"
@@ -1995,6 +2142,19 @@ export const kleosAbi = [
     "name": "propose",
     "outputs": [],
     "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "protocolRevenue",
+    "outputs": [
+      {
+        "internalType": "uint256",
+        "name": "",
+        "type": "uint256"
+      }
+    ],
+    "stateMutability": "view",
     "type": "function"
   },
   {
@@ -2306,6 +2466,19 @@ export const kleosAbi = [
       }
     ],
     "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "address",
+        "name": "to",
+        "type": "address"
+      }
+    ],
+    "name": "withdrawRevenue",
+    "outputs": [],
+    "stateMutability": "nonpayable",
     "type": "function"
   }
 ] as const;

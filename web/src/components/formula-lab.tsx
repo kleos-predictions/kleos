@@ -147,13 +147,13 @@ function WhaleStep() {
         <div className="flex flex-col gap-2">
           <span className="lbl">03  If YES wins, each sharp gets</span>
           <code className="w-fit rounded-[10px] bg-card-alt px-3 py-2 font-mono text-[15px]">
-            payout = m + (m / Σwinning$) · (L − 2%)      bonus = pool · ΔR·M / Σ(ΔR·M)
+            payout = m + (m / Σwinning$) · (L − 3%)      bonus = pool · ΔR·M / Σ(ΔR·M)
           </code>
           <p className="text-sm leading-relaxed text-muted">
-            Principal: {money(bet)} + ({money(bet)} / {money(yesMoney)}) × {money(whale * 0.98)} = <span className="text-ink">{money(principal)}</span>.
-            The 2% fee ({money(bonusPool)}) becomes a bonus for winners who gained reputation, weighted by ΔR × M:{" "}
+            Principal: {money(bet)} + ({money(bet)} / {money(yesMoney)}) × {money(whale * 0.97)} = <span className="text-ink">{money(principal)}</span>.
+            Of the losing side, 2% ({money(bonusPool)}) becomes a bonus for winners who gained reputation, weighted by ΔR × M:{" "}
             <span className="text-ink">{money(bonusPool / sharps)}</span> each. Money pays money, so a newcomer on the same side gets the same
-            principal per dollar. Reputation steers the signal and earns the bonus. Nobody prints money: everything paid out was bet.
+            principal per dollar. Reputation steers the signal and earns the bonus, and 1% is protocol revenue. Nobody prints money: everything paid out was bet.
           </p>
         </div>
         <DotNumber value={money(each)} className="text-[56px] leading-none text-accent" />

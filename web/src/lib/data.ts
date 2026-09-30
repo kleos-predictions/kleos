@@ -17,6 +17,7 @@ export type Market = {
   status: Status;
   oracle: string;
   criteria: string; // stored on-chain at creation, shown before every bet
+  creator?: { address: string; name?: string }; // markets created by a trader rather than the team
   type: string;
   closesAt: string;
   volume: number;

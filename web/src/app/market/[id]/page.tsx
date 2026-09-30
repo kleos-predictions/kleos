@@ -40,6 +40,15 @@ export default async function MarketPage(props: PageProps<"/market/[id]">) {
             <StatusTag status={market.status} />
           </div>
           <h1 className="max-w-[860px] text-[32px] leading-[1.15] font-medium text-balance md:text-[44px]">{market.question}</h1>
+          {market.creator && (
+            <p className="lbl flex items-center gap-2">
+              Created by
+              <Link href={`/profile/${market.creator.address}`} className="!text-ink normal-case">
+                {market.creator.name ? `@${market.creator.name}` : shortAddress(market.creator.address)}
+              </Link>
+              · $25 bond at stake if the court rules the question ambiguous
+            </p>
+          )}
         </header>
 
         <OddsDisplay repYes={market.repYes} moneyYes={market.moneyYes} />

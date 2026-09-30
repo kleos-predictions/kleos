@@ -107,8 +107,8 @@ describe("pitch demo: one whale vs 20 sharps", () => {
     await settleAll();
     const afterSettle = await Promise.all(sharps.map((s) => token.read.balanceOf([s.account.address])));
 
-    // Principal: $80 + (80 / 1,600) · ($2,000 − 2% fee) = $178, identical for every sharp.
-    for (let i = 0; i < sharps.length; i++) assert.equal(afterSettle[i] - before[i], usd(178));
+    // Principal: $80 + (80 / 1,600) · ($2,000 − 2% bonus fee − 1% protocol fee) = $177, identical for every sharp.
+    for (let i = 0; i < sharps.length; i++) assert.equal(afterSettle[i] - before[i], usd(177));
 
     const pay = await kleos.read.payouts([1n]);
     assert.equal(pay[0], usd(40), "2% of the losing pool funds the bonus");
@@ -122,8 +122,15 @@ describe("pitch demo: one whale vs 20 sharps", () => {
     }
     // Bonuses sum to the pool (minus rounding dust); each sharp ends near $180.
     assert.ok(usd(40) - bonusTotal < 20n, `bonus dust ${usd(40) - bonusTotal}`);
-    const leftover = await token.read.balanceOf([kleos.address]);
+    // 1% of the losing pool stays as protocol revenue; everything else was paid out.
+    assert.equal(await kleos.read.protocolRevenue(), usd(20));
+    const leftover = (await token.read.balanceOf([kleos.address])) - usd(20);
     assert.ok(leftover < 40n, `money paid + fees == money staked (dust ${leftover})`);
+    const treasury = wallets[29].account.address;
+    const t0 = await token.read.balanceOf([treasury]);
+    await kleos.write.withdrawRevenue([treasury]);
+    assert.equal((await token.read.balanceOf([treasury])) - t0, usd(20), "revenue reaches the treasury");
+    await assert.rejects(kleos.write.withdrawRevenue([treasury], { account: whale.account }), /NotOwner/);
 
     // The whale had R = 0 and stays at 0; sharps' gains are pending until they vest.
     assert.equal((await rep(ctx, whale.account.address)).r, 0n);
@@ -426,6 +433,39 @@ describe("Kleos Court", () => {
     assert.equal((await ctx.token.read.balanceOf([disputer.account.address])) - before, usd(25), "$15 bond back + the proposer's $10");
   });
 
+  it("an AMBIGUOUS verdict forfeits the creator's bond, and the creator never sits on the jury", async () => {
+    const ctx = await deploy();
+    const jurors = ctx.wallets.slice(18, 28);
+    for (const j of jurors) {
+      await ctx.kleos.write.seedReputation([j.account.address, wad(40), N_MIN]);
+      await ctx.kleos.write.joinCourt({ account: j.account });
+    }
+    const creator = jurors[0]; // a tier-V juror who also writes a market
+    await ctx.kleos.write.createMarket(["What counts as a suit?", 4, "o", "c", ctx.closeTime], { account: creator.account });
+    await ctx.kleos.write.bet([2n, true, usd(10)], { account: ctx.wallets[3].account });
+    await networkHelpers.time.increaseTo(ctx.closeTime);
+    await ctx.kleos.write.propose([2n, false, EVIDENCE, ""], { account: ctx.resolver.account });
+    await ctx.kleos.write.dispute([2n], { account: ctx.wallets[3].account });
+    const jury = (await ctx.kleos.read.getJury([2n, 1])).map((a) => a.toLowerCase());
+    assert.ok(!jury.includes(creator.account.address.toLowerCase()), "the creator isn't on the jury");
+
+    const court = await ctx.kleos.read.getCourt([2n]);
+    const byAddress = new Map(ctx.wallets.map((w) => [w.account.address.toLowerCase(), w]));
+    for (const [i, j] of jury.entries()) {
+      const salt = keccak256(toHex(`s${i}`));
+      const c = await ctx.kleos.read.voteCommitment([2n, 1, j as Address, 3, salt]);
+      await ctx.kleos.write.commitVote([2n, c], { account: byAddress.get(j)!.account });
+    }
+    await networkHelpers.time.increaseTo(court.commitEnd);
+    for (const [i, j] of jury.entries()) {
+      await ctx.kleos.write.revealVote([2n, 3, keccak256(toHex(`s${i}`))], { account: byAddress.get(j)!.account });
+    }
+    const pool = await ctx.kleos.read.globalBonusPool();
+    await ctx.kleos.write.closeCourt([2n]);
+    assert.equal((await ctx.kleos.read.getMarket([2n])).voided, true);
+    assert.equal((await ctx.kleos.read.globalBonusPool()) - pool, usd(25), "the bond funds future bonuses");
+  });
+
   it("AMBIGUOUS voids the market and refunds everyone, with no reputation change", async () => {
     const { ctx, disputer } = await disputed();
     const before = await ctx.token.read.balanceOf([disputer.account.address]);
@@ -508,5 +548,39 @@ describe("KleosSocial names", () => {
     await social.write.setName(["ana2"], { account: a.account });
     await social.write.setName(["sharp_ana"], { account: b.account }); // freed
     assert.deepEqual(await social.read.namesOf([[a.account.address, b.account.address]]), ["ana2", "sharp_ana"]);
+  });
+});
+
+describe("market creation", () => {
+  it("tier V creates with a $25 bond and a $2 fee; the team creates for free", async () => {
+    const ctx = await deploy();
+    const [trader, creator] = [ctx.wallets[1], ctx.wallets[2]];
+    const close = ctx.closeTime;
+    await ctx.kleos.write.seedReputation([trader.account.address, wad(20), N_MIN]);
+    await assert.rejects(ctx.kleos.write.createMarket(["Q?", 1, "o", "c", close], { account: trader.account }), /NotEligibleCreator/);
+
+    await ctx.kleos.write.seedReputation([creator.account.address, wad(40), N_MIN]);
+    const before = await ctx.token.read.balanceOf([creator.account.address]);
+    await ctx.kleos.write.createMarket(["Will it rain in Buenos Aires on Oct 5?", 4, "SMN", "YES if SMN reports rain.", close], { account: creator.account });
+    assert.equal(before - (await ctx.token.read.balanceOf([creator.account.address])), usd(27));
+    assert.equal(await ctx.kleos.read.protocolRevenue(), usd(2));
+    const m = await ctx.kleos.read.getMarket([2n]);
+    assert.equal(m.creator.toLowerCase(), creator.account.address.toLowerCase());
+    assert.equal(m.creatorBond, usd(25));
+    await assert.rejects(ctx.kleos.write.createMarket(["Late?", 1, "o", "c", 1n]), /BadCloseTime/);
+  });
+
+  it("returns the bond on a clean resolution, and the creator can't propose", async () => {
+    const ctx = await deploy();
+    const creator = ctx.wallets[2];
+    await ctx.kleos.write.seedReputation([creator.account.address, wad(40), N_MIN]);
+    await ctx.kleos.write.createMarket(["Q?", 1, "o", "c", ctx.closeTime], { account: creator.account });
+    await networkHelpers.time.increaseTo(ctx.closeTime);
+    await assert.rejects(ctx.kleos.write.propose([2n, true, EVIDENCE, ""], { account: creator.account }), /NotEligibleResolver/);
+    const before = await ctx.token.read.balanceOf([creator.account.address]);
+    await ctx.kleos.write.propose([2n, true, EVIDENCE, ""], { account: ctx.resolver.account });
+    await networkHelpers.time.increase(DISPUTE_WINDOW);
+    await ctx.kleos.write.finalize([2n]);
+    assert.equal((await ctx.token.read.balanceOf([creator.account.address])) - before, usd(25));
   });
 });
