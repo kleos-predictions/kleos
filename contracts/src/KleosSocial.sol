@@ -14,15 +14,15 @@ contract KleosSocial {
     mapping(address => string) public nameOf;
     mapping(bytes32 => address) public ownerOfName;
 
-    // Call votes: engagement only, one vote per address per call. A call's id is
-    // keccak256(abi.encode(txHash, logIndex)) of its CallPosted event.
-    mapping(bytes32 => uint256) public ups;
-    mapping(bytes32 => uint256) public downs;
-    mapping(bytes32 => mapping(address => int8)) public voteOf;
+    // Call votes: engagement only, one vote per address per call. A call's id is the callId
+    // Kleos numbers it with in its CallPosted event.
+    mapping(uint256 => uint256) public ups;
+    mapping(uint256 => uint256) public downs;
+    mapping(uint256 => mapping(address => int8)) public voteOf;
 
     event Followed(address indexed follower, address indexed followee);
     event Unfollowed(address indexed follower, address indexed followee);
-    event CallVoted(bytes32 indexed callId, address indexed voter, int8 vote);
+    event CallVoted(uint256 indexed callId, address indexed voter, int8 vote);
     event NameSet(address indexed user, string name);
 
     error CannotFollowSelf();
@@ -55,7 +55,7 @@ contract KleosSocial {
     }
 
     /// @notice +1 up, -1 down, 0 clears your vote.
-    function vote(bytes32 callId, int8 value) external {
+    function vote(uint256 callId, int8 value) external {
         if (value < -1 || value > 1) revert BadVote();
         int8 previous = voteOf[callId][msg.sender];
         if (previous == value) return;
@@ -68,7 +68,7 @@ contract KleosSocial {
     }
 
     /// @notice Tallies for many calls at once, plus `voter`'s own vote on each (0 if none).
-    function tallies(bytes32[] calldata callIds, address voter)
+    function tallies(uint256[] calldata callIds, address voter)
         external
         view
         returns (uint256[] memory up, uint256[] memory down, int8[] memory mine)

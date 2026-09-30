@@ -33,7 +33,7 @@ export function FeedList({ items, tabs = true }: { items: FeedItem[]; tabs?: boo
   const followed = new Set((following ?? []).map((a) => a.toLowerCase()));
 
   // Ups and downs: engagement only. Read in one batch; changes apply optimistically.
-  const ids = items.map((i) => i.id);
+  const ids = items.map((i) => BigInt(i.id));
   const { data: tally, refetch: refetchTally } = useReadContract({
     address: SOCIAL_ADDRESS,
     abi: kleosSocialAbi,
@@ -41,8 +41,8 @@ export function FeedList({ items, tabs = true }: { items: FeedItem[]; tabs?: boo
     args: [ids, account.address ?? zeroAddress],
     query: { enabled: Boolean(SOCIAL_ADDRESS) && ids.length > 0 },
   });
-  const [mineOverride, setMineOverride] = useState<Record<string, number>>({});
-  const counts = (idx: number, id: string) => {
+  const [mineOverride, setMineOverride] = useState<Record<number, number>>({});
+  const counts = (idx: number, id: number) => {
     const baseMine = tally ? Number(tally[2][idx]) : 0;
     const mine = mineOverride[id] ?? baseMine;
     let up = tally ? Number(tally[0][idx]) : 0;
@@ -55,7 +55,7 @@ export function FeedList({ items, tabs = true }: { items: FeedItem[]; tabs?: boo
     return { up, down, mine };
   };
 
-  async function vote(id: `0x${string}`, current: number, value: 1 | -1) {
+  async function vote(id: number, current: number, value: 1 | -1) {
     const next = current === value ? 0 : value; // tapping your vote again clears it
     if (!SOCIAL_ADDRESS) {
       setMineOverride((m) => ({ ...m, [id]: next })); // demo mode: local only
@@ -66,7 +66,7 @@ export function FeedList({ items, tabs = true }: { items: FeedItem[]; tabs?: boo
     setMineOverride((m) => ({ ...m, [id]: next }));
     try {
       await account.whenFunded();
-      const hash = await client.writeContract({ account: client.account, chain, address: SOCIAL_ADDRESS, abi: kleosSocialAbi, functionName: "vote", args: [id, next] });
+      const hash = await client.writeContract({ account: client.account, chain, address: SOCIAL_ADDRESS, abi: kleosSocialAbi, functionName: "vote", args: [BigInt(id), next] });
       await publicClient.waitForTransactionReceipt({ hash });
       await refetchTally();
       setMineOverride((m) => {

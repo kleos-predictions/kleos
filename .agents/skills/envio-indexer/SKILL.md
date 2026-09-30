@@ -43,7 +43,7 @@ These notes were written for **HyperIndex v3.12.1**. Envio's API changed a lot a
 - **The `Settled` payout doesn't say who won.** `payout > 0` also covers refunds (a voided market, or nobody on the winning side). Derive winners from indexed positions plus the `MarketResolved` outcome, and skip markets that emit `MarketVoided`.
 - **Reputation only moves in markets with ≥ $1,000 and ≥ 10 distinct bettors.** Track both on `Market` for bet buddies (#2).
 - **The sharp signal** uses the trader's R at bet time (R ≥ 16), read from the `Trader` entity when `BetPlaced` fires.
-- **A call's id** is `keccak256(abi.encode(txHash, logIndex))` of its `CallPosted` event. It must match what `KleosSocial.vote` uses (see `contracts/scripts/seed-demo.ts`).
+- **A call's id** is the `callId` field of its `CallPosted` event, numbered by `Kleos` from 1 (`callCount`). `KleosSocial.vote` and `CallVoted` use the same number, so use it as the `Call` entity id.
 
 ## Tests
 

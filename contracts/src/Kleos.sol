@@ -136,6 +136,7 @@ contract Kleos {
     uint256 public marketCount;
     uint256 public globalBonusPool;
     uint256 public protocolRevenue; // accrued, withdrawable by the owner
+    uint256 public callCount; // calls are numbered from 1; the id every other system uses
 
     mapping(uint8 => string) public categoryName; // allowlist: unset = not allowed
     mapping(uint256 => Market) internal _markets;
@@ -176,7 +177,9 @@ contract Kleos {
     event Sponsored(uint256 indexed marketId, address indexed sponsor, uint256 amount);
     /// @dev Public and permanent. Emitted only (never stored) to keep it cheap; timestamped before
     ///      the outcome, so after resolution it becomes a receipt.
-    event CallPosted(uint256 indexed marketId, address indexed user, bool side, uint256 amount, uint256 entryPrice, string text);
+    event CallPosted(
+        uint256 indexed callId, uint256 indexed marketId, address indexed user, bool side, uint256 amount, uint256 entryPrice, string text
+    );
     event OutcomeProposed(uint256 indexed marketId, address indexed proposer, bool outcome, bytes32 evidenceHash, string evidenceURI);
     event OutcomeDisputed(uint256 indexed marketId, address indexed disputer);
     event MarketResolved(uint256 indexed marketId, bool outcome, uint256 fee);
@@ -384,7 +387,7 @@ contract Kleos {
     function betWithCall(uint256 id, bool yes, uint256 amount, string calldata text) external {
         if (bytes(text).length > MAX_CALL_BYTES) revert CallTooLong();
         uint256 entryPrice = _bet(id, yes, amount);
-        if (bytes(text).length > 0) emit CallPosted(id, msg.sender, yes, amount, entryPrice, text);
+        if (bytes(text).length > 0) emit CallPosted(++callCount, id, msg.sender, yes, amount, entryPrice, text);
     }
 
     function _bet(uint256 id, bool yes, uint256 amount) internal returns (uint256 entryPrice) {
