@@ -1,0 +1,159 @@
+# Kleos indexer schema. Money is raw 6-decimal token units; R, prices and multipliers are raw
+# 18-decimal (WAD) values, exactly as the contract emits them. Timestamps are unix seconds.
+
+enum MarketState {
+  Open
+  Proposed
+  Disputed
+  Resolved
+}
+
+enum CallResult {
+  Open
+  Right
+  Wrong
+  Refunded
+}
+
+enum ChangeKind {
+  Bet # settlement of a position
+  Jury # Kleos Court reward or penalty (jurors never hold a position in the market)
+  Admin # marketId 0: demo seed or admin slash
+}
+
+type Category {
+  id: ID! # category id
+  name: String!
+  markets: [Market!]! @derivedFrom(field: "category")
+}
+
+type Market {
+  id: ID! # marketId
+  question: String!
+  category: Category!
+  creator: String! # the team (free) or a tier-V trader (bond + fee)
+  creatorBondForfeited: Boolean # set when a trader's creation bond is released; true if the court ruled the question AMBIGUOUS
+  oracle: String!
+  criteria: String!
+  closeTime: BigInt!
+  createdAt: Int!
+
+  state: MarketState!
+  outcome: Boolean # set once resolved (not for voided markets)
+  voided: Boolean!
+  resolvedAt: Int
+  proposedOutcome: Boolean
+  proposer: String
+  proposedAt: Int
+  evidenceHash: String
+  evidenceURI: String
+  disputer: String
+
+  yesMoney: BigInt!
+  noMoney: BigInt!
+  yesEff: BigInt!
+  noEff: BigInt!
+  priceRepYes: BigInt! # after the latest bet; 0.5 before any
+  priceMoneyYes: BigInt!
+  betCount: Int!
+  bettorCount: Int! # distinct addresses
+  callCount: Int!
+
+  fee: BigInt! # 2% of the losing pool, set on resolution
+  bonusPool: BigInt! # fee + sponsorships + global-pool top-ups; the final pot once bonusOpen
+  bonusWeight: BigInt! # Σ ΔR⁺·M of winners, known once bonusOpen. Claimable = bonusPool · Position.bonusWeight / bonusWeight
+  sponsored: BigInt! # third-party sponsorships only (not global-pool top-ups)
+  lastSponsor: String
+  bonusOpen: Boolean!
+
+  bets: [Bet!]! @derivedFrom(field: "market")
+  positions: [Position!]! @derivedFrom(field: "market")
+  pricePoints: [PricePoint!]! @derivedFrom(field: "market")
+  calls: [Call!]! @derivedFrom(field: "market")
+}
+
+# One trader's stake in one market, both sides. Id: marketId_address.
+type Position {
+  id: ID!
+  market: Market! @index
+  trader: Trader! @index
+  yesMoney: BigInt!
+  noMoney: BigInt!
+  yesEff: BigInt!
+  noEff: BigInt!
+  settled: Boolean!
+  payout: BigInt!
+  bonusWeight: BigInt! # ΔR⁺·M from settlement; 0 unless the trader gained reputation here
+  bonus: BigInt! # claimed so far
+}
+
+type Bet {
+  id: ID! # block_logIndex
+  market: Market! @index
+  trader: Trader! @index
+  side: Boolean! # true = YES
+  amount: BigInt!
+  effective: BigInt!
+  multiplier: BigInt!
+  entryPrice: BigInt! # rep-weighted price of the chosen side before the bet
+  timestamp: Int! @index
+  txHash: String!
+}
+
+# Both prices right after a bet, for the price chart.
+type PricePoint {
+  id: ID! # block_logIndex
+  market: Market! @index
+  timestamp: Int! @index
+  priceRepYes: BigInt!
+  priceMoneyYes: BigInt!
+}
+
+type Trader {
+  id: ID! # lowercase address
+  r: BigInt! # vested reputation
+  pending: BigInt! # gains waiting to vest
+  resolvedBets: Int! # settles in markets deep enough to count (seeds are not in any event)
+  flagged: Boolean!
+  wins: Int!
+  losses: Int!
+  betCount: Int!
+  volume: BigInt!
+  marketCount: Int!
+  callCount: Int!
+  bets: [Bet!]! @derivedFrom(field: "trader")
+  positions: [Position!]! @derivedFrom(field: "trader")
+  reputationChanges: [ReputationChange!]! @derivedFrom(field: "trader")
+  calls: [Call!]! @derivedFrom(field: "trader")
+}
+
+# Every ReputationChanged event, so anyone can rebuild R and check the math.
+type ReputationChange {
+  id: ID! # block_logIndex
+  trader: Trader! @index
+  market: Market # unset for Admin changes (marketId 0)
+  kind: ChangeKind!
+  delta: BigInt! # signed
+  newR: BigInt!
+  pendingR: BigInt!
+  entryPrice: BigInt!
+  side: Boolean!
+  outcome: Boolean!
+  timestamp: Int! @index
+  txHash: String!
+}
+
+# A public one-line reason posted with a bet. Id = the callId Kleos numbers from 1, which
+# KleosSocial votes use too.
+type Call {
+  id: ID!
+  market: Market! @index
+  trader: Trader! @index
+  side: Boolean!
+  amount: BigInt!
+  entryPrice: BigInt!
+  text: String!
+  result: CallResult!
+  timestamp: Int! @index
+  txHash: String!
+}

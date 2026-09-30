@@ -5,49 +5,45 @@ description: Build and test the Kleos Envio HyperIndex indexer and wire the web 
 
 # Envio indexer
 
-The indexer turns contract events into the reads the app needs: markets, prices, bets, the sharp signal, the leaderboard, profile history, court state and bet buddies. Requirements live in GitHub issues #1 (indexer) and #2 (bet buddies); read them first.
+The indexer turns contract events into the reads the app needs: markets, prices, bets, the sharp signal, the leaderboard, profile history, court state and bet buddies.
 
-## Verify before you rely on this
+## Start here
 
-These notes were written for **HyperIndex v3.12.1**. Envio's API changed a lot across versions, and model training data is mostly older. Before writing handlers, check the installed version's docs or types (`indexer/node_modules/envio`) for anything below that matters to the task, and fix this file if it is wrong.
+1. **`indexer/README.md`:** local setup and testing.
+2. **`indexer/ARCHITECTURE.md`:** event flow, entities and market lifecycle.
+3. **`contracts/src/`:** the source of truth for event semantics and formulas.
 
-## Setup
+## Envio API reference
 
-- **Location:** `indexer/` at the repo root. Envio Cloud supports a monorepo root dir.
-- **Package manager: pnpm only.** `npm install` fails with an `edgesOut` error.
-- **Scaffold without prompts:**
-  ```bash
-  npm --prefix contracts run compile   # ABI: contracts/artifacts/src/Kleos.sol/Kleos.json
-  pnpx envio@3.12.1 -d ./indexer init contract-import local \
-    -a <path-to-abi.json> --contract-name Kleos -b 10143 \
-    -c <KleosAddress> -s <deployBlock> --single-contract --all-events \
-    -n kleos-indexer -l typescript --api-token "" </dev/null
-  ```
-  Then add `KleosSocial` (`NameSet`, `Followed`, `Unfollowed`, `CallVoted`) as a second contract in `config.yaml`.
-- **Config:** `config.yaml` uses the v3 `chains:` syntax, not `networks:`. Monad testnet (10143) is on HyperSync natively, so no RPC URL is needed.
-- **Env vars** that Envio Cloud should see must start with `ENVIO_`.
+Envio 3.12.1 ships official skills in `indexer/.agents/skills/indexer-*` (handlers, schema, testing, configuration, transactions and more). They match the installed version, so use them for API questions instead of memory. Training data is mostly older Envio, and the API changed a lot.
 
-## Handlers
+## Kleos-specific rules
 
-- Register with `indexer.onEvent({ contract, event, fields }, async ({ event, context }) => …)`. Loaders are deprecated.
-- Request `transaction: ["hash"]` in `fields`: every profile row links to Monadscan.
-- Entities are read-only. Write a copy: `context.X.set({ ...existing, field })`.
-- **Envio Cloud has no `_aggregate` queries.** Compute every count, sum and ranking in handlers (`Trader.wins`, `SharpSignal`, `BuddyPair.wonTogether`).
+- **pnpm only.** pnpm 11 blocks install scripts, so `esbuild` is allowed in `indexer/pnpm-workspace.yaml`.
+- **Env vars** in `config.yaml` must start with `ENVIO_`, or Envio Cloud won't see them.
+- **Request `transaction: ["hash"]`** in `fields` for anything the UI links to Monadscan.
+- **Envio Cloud has no `_aggregate` queries.** Compute every count, sum and ranking in handlers.
 - Money uses 6 decimals. R, M, prices and weights use 18 (WAD). Store raw `BigInt`s, and convert in the app.
 
 ## Event semantics that are easy to get wrong
 
 - **`marketId` 0** in `ReputationChanged` marks demo seeds and admin slashes, not a market.
-- **Jury rewards and penalties** are `ReputationChanged` rows with `entryPrice` 0. They aren't bets: don't count them as wins or losses.
-- **Positive ΔR goes to pending**, so it isn't part of R yet: R grows only on `Vested`. Losses and `Slashed` reduce R, then pending.
-- **The `Settled` payout doesn't say who won.** `payout > 0` also covers refunds (a voided market, or nobody on the winning side). Derive winners from indexed positions plus the `MarketResolved` outcome, and skip markets that emit `MarketVoided`.
-- **Reputation only moves in markets with ≥ $1,000 and ≥ 10 distinct bettors.** Track both on `Market` for bet buddies (#2).
-- **The sharp signal** uses the trader's R at bet time (R ≥ 16), read from the `Trader` entity when `BetPlaced` fires.
+- **Jury rewards and penalties** are `ReputationChanged` rows with `entryPrice` 0 and `marketId` > 0. They aren't bets: don't count them as wins or losses.
+- **`ReputationChanged` carries `newR` and `pendingR`.** Set the trader's values from them rather than accumulating deltas. Positive ΔR goes to pending, and R grows only on `Vested`.
+- **The `Settled` payout doesn't say who won.** `payout > 0` also covers refunds. Derive winners from indexed positions plus the `MarketResolved` outcome.
+- **`MarketResolved` never fires for voided markets.** A court AMBIGUOUS verdict or a failed court emits `MarketVoided` alone.
+- **Reputation only moves in markets with ≥ $1,000 and ≥ 10 distinct bettors.** Track both on `Market`.
+- **The sharp signal** uses the trader's R at bet time (R ≥ 16), from the `Trader` entity when `BetPlaced` fires.
 - **A call's id** is the `callId` field of its `CallPosted` event, numbered by `Kleos` from 1 (`callCount`). `KleosSocial.vote` and `CallVoted` use the same number, so use it as the `Call` entity id.
 
-## Tests
+## Testing locally, without Docker
 
-Docker isn't installed, so the indexer can't run locally. Prove handlers with `createTestIndexer` (`pnpm test` in `indexer/`), with at least one test per entity. Bet buddies needs a test with 3 traders and 2 winners on one market, which gives one pair with `wonTogether = 1`.
+`createTestIndexer()` runs the real handlers in memory:
+
+- **Unit:** `simulate: [...]` feeds synthetic events. Use it for edge cases.
+- **Integration:** `{ startBlock, endBlock }` on chain 31337 reads the real local chain over RPC. Bring the chain up with the `dev-stack` skill first. These tests skip when the RPC is down.
+
+Only `envio dev` (the local GraphQL server) needs Docker. For the web app, use Envio Cloud instead.
 
 ## Testnet changes
 
@@ -55,6 +51,6 @@ Follow the explicit owner-authorization rule in `AGENTS.md` before any deploymen
 
 ## App wiring
 
-- `web/src/lib/indexer.ts` is a small `fetch` client for `NEXT_PUBLIC_INDEXER_URL`. No SDK.
-- Return the same types as `web/src/lib/data.ts` so pages barely change. When the env var is empty, fall back to sample data (demo mode) or to `web/src/lib/onchain.ts`.
+- `web/src/lib/indexer.ts` is a small server-side `fetch` client for `INDEXER_URL` (server-only, so a new Envio deployment URL needs no client rebuild; cached to stay under the free plan's 100 queries a minute). No SDK.
+- Return the same types as `web/src/lib/data.ts` so pages barely change. When the env var is empty, fall back to `web/src/lib/onchain.ts`, then to sample data.
 - GraphQL returns numerics as strings and addresses checksummed. Parse the numbers, and lowercase addresses before comparing.

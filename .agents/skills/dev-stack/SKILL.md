@@ -45,15 +45,13 @@ Local deploys (chain 31337) don't prompt for confirmation. On a fresh node the a
 
 ## 4. Web env
 
-`sync-env.mjs` only writes the `NEXT_PUBLIC_*_ADDRESS` keys. Two more are needed in `web/.env.local` for live mode against the local chain. Add them if missing, and never overwrite other lines:
+`deploy:local` runs `sync-env.mjs`, which writes the chain mode, the three contract addresses and the deploy block into `web/.env.local`. One line has to be added by hand, once, and never overwritten:
 
 ```
-NEXT_PUBLIC_CHAIN=local
-# Hardhat dev account #0: public test key, local chain only. It deployed the contracts, so it is the kUSD sponsor.
-SPONSOR_PRIVATE_KEY=<local-node-private-key>
+SPONSOR_PRIVATE_KEY=<Account #0's private key>
 ```
 
-Never put a real key here. For Monad testnet the sponsor is a separate wallet (see `web/.env.example`).
+Copy it from the `Private Key` under `Account #0` in the node's startup output (step 2). That account deployed the contracts, so it's the kUSD sponsor that funds new passkey accounts. `web/.env.local` is git-ignored. Never paste a key into docs, commits or chat, and never use a real key locally. On Monad testnet the sponsor is a separate wallet (see `web/.env.example`).
 
 ## 5. App
 
@@ -74,6 +72,19 @@ curl -s localhost:3100/feed | grep -c kleos_maxi   # > 0 means live data from th
 ```
 
 Every page should return 200, and `/feed` should show the seeded `@kleos_maxi` calls. Samples appear only in demo mode.
+
+## 7. Indexer (only when working on it)
+
+`indexer/` uses **pnpm**, unlike `web/` and `contracts/`. Codegen output isn't committed, so run it after every pull that changes `schema.graphql` or a config:
+
+```bash
+cd indexer && pnpm install && pnpm codegen && pnpm test
+```
+
+- `pnpm test` runs the simulated tests anywhere. The local-chain test runs the real handlers over this stack and compares the results with the contracts; it skips itself when the chain isn't up and seeded.
+- `config.yaml` targets this local chain. It expects Kleos at the address a fresh node gives it; if the deploy order changes, set `ENVIO_LOCAL_KLEOS_ADDRESS` in `indexer/.env`.
+- `config.testnet.yaml` is what Envio Cloud runs. Testing it locally needs `ENVIO_API_TOKEN` in `indexer/.env` (see `indexer/README.md`).
+- The seed takes a few minutes, because it waits out a real dispute window to resolve one market.
 
 ## Notes
 

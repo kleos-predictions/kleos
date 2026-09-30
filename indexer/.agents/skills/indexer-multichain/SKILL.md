@@ -1,0 +1,114 @@
+---
+name: indexer-multichain
+description: >-
+  Use when deploying an indexer across multiple chains. Per-chain data mode,
+  entity ID namespacing to avoid collisions, chain-specific configuration
+  patterns, and the context.chain runtime API.
+metadata:
+  managed-by: envio
+---
+
+# Multichain Indexing
+
+## Per-Chain Data Mode
+
+By default every entity row and effect cache is shared by all chains, so the same
+entity id on two chains resolves to one row. Set `disable_default_cross_chain`
+to make entities and effect caches per-chain instead:
+
+```yaml
+name: my-indexer
+disable_default_cross_chain: true
+```
+
+With it on:
+
+- Entity tables get a composite `(id, chainId)` primary key. The same id on two
+  chains is two independent rows, in memory, in Postgres and in ClickHouse, and
+  entity history and reorg rollback are scoped per chain too.
+- Effects that don't state a `crossChain` option get one cache per chain.
+- Handler code is unchanged: a handler always runs on one chain, so
+  `context.Token.get(id)` reads that chain's row.
+
+Sharing becomes explicit. Add `@crossChain` to an entity whose rows should stay
+shared by every chain:
+
+```graphql
+type Counter {          # per-chain: one row per (id, chain)
+  id: ID!
+  count: BigInt!
+}
+
+type GlobalCounter @crossChain {   # one row shared by every chain
+  id: ID!
+  count: BigInt!
+}
+```
+
+`@crossChain` is only valid when `disable_default_cross_chain: true` — without
+the flag entities are already cross-chain and codegen rejects the directive.
+
+Per-chain entities reserve the `chainId` column name (`chain_id` under
+`column_name_format: snake_case`), so a schema field can't claim it.
+
+Outside a handler there is no chain in context, so the test indexer's
+chain-agnostic operations take one: `indexer.Counter.set({ id, count, chainId })`,
+and `indexer.Counter.get(id)` throws if the id exists on more than one chain —
+narrow it with `indexer.Counter.getWhere({ chainId: { _eq: 1 } })`.
+
+## Entity ID Namespacing
+
+Without per-chain data mode, prefix entity IDs with `chainId` to avoid
+collisions across chains:
+
+```ts
+const id = `${event.chainId}-${event.params.tokenId}`;
+context.Token.set({ id, ...tokenData });
+```
+
+Never hardcode `chainId = 1` — always use `event.chainId`.
+
+Chain-specific singleton IDs (e.g., Bundle): `${event.chainId}-1`
+
+## Chain-Specific Logic
+
+```ts
+indexer.onEvent({ contract: "Contract", event: "Event" }, async ({ event, context }) => {
+  const chainId = context.chain.id;
+
+  const config = {
+    1: { wrappedNative: "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2" },
+    137: { wrappedNative: "0x0d500B1d8E8eF31E21C99d1Db9A6444d3ADf1270" },
+  }[chainId];
+
+  // context.chain.isRealtime is true once ALL chains have caught up to head
+  if (context.chain.isRealtime) {
+    // Realtime-only logic
+  }
+});
+```
+
+## Config
+
+Global contract definitions + chain-specific addresses:
+
+```yaml
+contracts:
+  - name: ERC20
+    events:
+      - event: Transfer(indexed address from, indexed address to, uint256 value)
+
+chains:
+  - id: 1
+    contracts:
+      - name: ERC20
+        address:
+          - 0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48
+  - id: 137
+    contracts:
+      - name: ERC20
+        address:
+          - 0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174
+```
+
+> If something is unclear, use the `envio-docs` skill to search and read the latest documentation.

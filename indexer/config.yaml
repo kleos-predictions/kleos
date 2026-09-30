@@ -1,0 +1,42 @@
+# yaml-language-server: $schema=./node_modules/envio/evm.schema.json
+name: kleos-indexer
+disable_default_cross_chain: true
+chains:
+- id: 31337
+  rpc: http://127.0.0.1:8545
+  start_block: 0
+  contracts:
+  - name: Kleos
+    address:
+    # A fresh local node always deploys Kleos here. If the deploy order changes, set
+    # ENVIO_LOCAL_KLEOS_ADDRESS (not ENVIO_KLEOS_ADDRESS, which is the testnet one in .env).
+    - "${ENVIO_LOCAL_KLEOS_ADDRESS:-0x9fE46736679d2D9a65F0992F2272dE9f3c7fa6e0}"
+    events:
+    - event: BetPlaced(uint256 indexed marketId, address indexed user, bool side, uint256 amount, uint256 effective, uint256 multiplier, uint256 entryPrice, uint256 priceRepYes, uint256 priceMoneyYes)
+    - event: BonusClaimed(uint256 indexed marketId, address indexed user, uint256 amount)
+    - event: BonusOpened(uint256 indexed marketId, uint256 bonusPool, uint256 totalWeight)
+    - event: BonusRolledOver(uint256 indexed marketId, uint256 amount)
+    - event: CallPosted(uint256 indexed callId, uint256 indexed marketId, address indexed user, bool side, uint256 amount, uint256 entryPrice, string text)
+    - event: CategoryAdded(uint8 indexed id, string name)
+    - event: CourtRedrawn(uint256 indexed marketId, uint8 failedRound)
+    - event: CreatorBondReleased(uint256 indexed marketId, address indexed creator, uint256 amount, bool forfeited)
+    - event: FlagCleared(address indexed user)
+    - event: Flagged(address indexed user, uint256 indexed marketId)
+    - event: JurorJoined(address indexed juror)
+    - event: JurorLeft(address indexed juror)
+    - event: JuryDrawn(uint256 indexed marketId, uint8 round, address[] jurors)
+    - event: MarketCreated(uint256 indexed marketId, address indexed creator, string question, uint8 category, string oracle, string criteria, uint64 closeTime)
+    - event: MarketResolved(uint256 indexed marketId, bool outcome, uint256 fee)
+    - event: MarketVoided(uint256 indexed marketId)
+    - event: OutcomeDisputed(uint256 indexed marketId, address indexed disputer)
+    - event: OutcomeProposed(uint256 indexed marketId, address indexed proposer, bool outcome, bytes32 evidenceHash, string evidenceURI)
+    - event: RevenueAccrued(uint256 indexed marketId, uint256 amount)
+    - event: RevenueWithdrawn(address indexed to, uint256 amount)
+    - event: ReputationChanged(address indexed user, uint256 indexed marketId, int256 delta, uint256 newR, uint256 pendingR, uint256 entryPrice, bool side, bool outcome)
+    - event: Settled(uint256 indexed marketId, address indexed user, uint256 payout, uint256 bonusWeight)
+    - event: Slashed(address indexed user, uint256 amount)
+    - event: Sponsored(uint256 indexed marketId, address indexed sponsor, uint256 amount)
+    - event: Verdict(uint256 indexed marketId, uint8 round, uint8 vote)
+    - event: Vested(address indexed user, uint256 amount, uint256 newR)
+    - event: VoteCommitted(uint256 indexed marketId, uint8 round, address indexed juror)
+    - event: VoteRevealed(uint256 indexed marketId, uint8 round, address indexed juror, uint8 vote)
