@@ -32,7 +32,9 @@ export const publicClient = createPublicClient({ chain, transport: http(serverRp
 // where the public Monad RPC allows 100 blocks per call. Server-only; the URL carries a token.
 const logsRpc = typeof window === "undefined" && !IS_LOCAL_CHAIN ? process.env.MONAD_LOGS_RPC : undefined;
 export const HAS_LOGS_RPC = Boolean(logsRpc) || IS_LOCAL_CHAIN;
-export const logsClient = logsRpc ? createPublicClient({ chain, transport: http(logsRpc) }) : publicClient;
+// Without HyperRPC, logs come from the chain's public RPC: private nodes on free plans (e.g.
+// Chainstack) refuse eth_getLogs as an archive request, while the public RPC serves 100 blocks a call.
+export const logsClient = createPublicClient({ chain, transport: http(logsRpc) });
 
 // Reads only. Accounts come from Mera passkeys (see lib/mera.ts), never from a wallet extension.
 // The active chain goes first, so wagmi reads default to it.
