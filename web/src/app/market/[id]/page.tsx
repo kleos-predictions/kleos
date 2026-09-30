@@ -3,8 +3,9 @@ import { notFound } from "next/navigation";
 import { Suspense } from "react";
 import { getMarket, recentBets, sampleCalls, MARKETS, type Call } from "@/lib/data";
 import { IS_LIVE, shortAddress } from "@/lib/chain";
-import { readCalls } from "@/lib/onchain";
+import { readCalls, readLiveMarket } from "@/lib/onchain";
 import { CallsList } from "@/components/calls-list";
+import { ResolutionPanel } from "@/components/resolution-panel";
 import { OddsDisplay } from "@/components/odds-display";
 import { DottedLineChart } from "@/components/dotted-line-chart";
 import { ResolutionTrack } from "@/components/resolution-track";
@@ -15,7 +16,7 @@ import { SharpSignal } from "@/components/sharp-signal";
 
 export default async function MarketPage(props: PageProps<"/market/[id]">) {
   const { id } = await props.params;
-  const market = getMarket(Number(id));
+  const market = getMarket(Number(id)) ?? (IS_LIVE ? await readLiveMarket(Number(id)).catch(() => null) : null);
   if (!market) notFound();
   const bets = recentBets(market.id);
   let calls: Call[] = sampleCalls(market.id);
@@ -66,14 +67,14 @@ export default async function MarketPage(props: PageProps<"/market/[id]">) {
         <section className="card flex flex-col gap-6 p-6">
           <div className="flex items-center justify-between">
             <span className="lbl">Resolution</span>
-            {market.proposed && (
+            {!IS_LIVE && market.proposed && (
               <span className="lbl !text-ink">
                 Proposed {market.proposed.outcome ? "YES" : "NO"} · final in {market.proposed.finalIn}
               </span>
             )}
           </div>
-          <ResolutionTrack stage={market.stage} />
-          <div className="flex flex-col gap-1 rounded-[12px] bg-card-alt p-4">
+          {IS_LIVE ? <ResolutionPanel marketId={market.id} oracle={market.oracle} /> : <ResolutionTrack stage={market.stage} />}
+          <div className="flex flex-col gap-1 rounded-[12px] border border-line p-4">
             <span className="lbl">Resolution criteria · written before the first bet</span>
             <p className="leading-relaxed">{market.criteria}</p>
           </div>

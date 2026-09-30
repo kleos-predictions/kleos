@@ -6,7 +6,7 @@ import { encodeAbiParameters, keccak256, type Address } from "viem";
 import { kleosAbi } from "./abi";
 import { KLEOS_ADDRESS, SOCIAL_ADDRESS, publicClient } from "./chain";
 import { kleosSocialAbi } from "./abi";
-import type { Call, FeedItem, RepChange } from "./data";
+import type { Call, FeedItem, Market, RepChange } from "./data";
 
 const WAD = 1e18;
 const DEPLOY_BLOCK = BigInt(process.env.NEXT_PUBLIC_KLEOS_DEPLOY_BLOCK ?? "0");
@@ -174,4 +174,50 @@ export async function readFeed(limit = 50, user?: Address): Promise<FeedItem[]> 
 
 function readMarket(id: number) {
   return publicClient.readContract({ address: KLEOS_ADDRESS!, abi: kleosAbi, functionName: "getMarket", args: [BigInt(id)] });
+}
+
+const CATEGORY_NAMES = ["", "Crypto", "Sports", "Tech", "Culture"] as const;
+
+/** A market created on-chain (beyond the sample set), shaped like the sample data the pages expect. */
+export async function readLiveMarket(id: number): Promise<Market | null> {
+  await connection();
+  const count = Number(await publicClient.readContract({ address: KLEOS_ADDRESS!, abi: kleosAbi, functionName: "marketCount" }));
+  if (id < 1 || id > count) return null;
+  const [m, [repYes, moneyYes], bettors] = await Promise.all([
+    readMarket(id),
+    publicClient.readContract({ address: KLEOS_ADDRESS!, abi: kleosAbi, functionName: "prices", args: [BigInt(id)] }),
+    publicClient.readContract({ address: KLEOS_ADDRESS!, abi: kleosAbi, functionName: "getBettors", args: [BigInt(id)] }),
+  ]);
+  const rep = Number(repYes) / WAD;
+  const money = Number(moneyYes) / WAD;
+  const closeMs = Number(m.closeTime) * 1000;
+  const status: Market["status"] = m.state === 3 ? "resolved" : m.state >= 1 ? "dispute" : closeMs - Date.now() < 86_400_000 ? "closing" : "live";
+  return {
+    id,
+    question: m.question,
+    category: (CATEGORY_NAMES[m.category] || "Culture") as Market["category"],
+    status,
+    oracle: m.oracle,
+    criteria: m.criteria,
+    type: "Community market",
+    closesAt: new Date(closeMs).toLocaleString("en-US", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit", timeZone: "UTC" }) + " UTC",
+    volume: Number(m.yesMoney + m.noMoney) / 1e6,
+    bettors: bettors.length,
+    repYes: rep,
+    moneyYes: money,
+    history: [
+      { t: 0, rep: 0.5, money: 0.5 },
+      { t: 1, rep, money },
+    ],
+    sharps: { yes: 0, no: 0 },
+    stage: 0,
+  };
+}
+
+/** On-chain markets past the sample set (created by the demo seed or later). */
+export async function readExtraMarkets(fromId: number): Promise<Market[]> {
+  await connection();
+  const count = Number(await publicClient.readContract({ address: KLEOS_ADDRESS!, abi: kleosAbi, functionName: "marketCount" }));
+  const ids = Array.from({ length: Math.max(0, count - fromId + 1) }, (_, i) => fromId + i);
+  return (await Promise.all(ids.map(readLiveMarket))).filter((m): m is Market => m !== null);
 }

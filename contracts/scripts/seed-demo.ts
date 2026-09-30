@@ -1,7 +1,11 @@
 // Seeds a deployed Kleos with demo traders: usernames, starting reputation (published on-chain
 // as marketId 0 seeds), bets with calls, follows and votes.
 //
-//   npx hardhat run scripts/seed-demo.ts --network localhost
+//   KLEOS_ME=0xYourAddress npx hardhat run scripts/seed-demo.ts --network localhost
+//
+// Also sets up the Kleos Court demo: a jury pool, one market resolved for real (so profiles have
+// genuine reputation history) and one short market that closes a few minutes after seeding.
+// KLEOS_ME (optional) gets demo reputation so that account can propose outcomes live.
 //
 // Local only for now: it uses the node's pre-funded accounts. The testnet version funds fresh
 // wallets from the deployer instead.
@@ -83,3 +87,64 @@ for (const c of calls) {
 }
 
 console.log(`Seeded ${PERSONAS.length} traders and ${calls.length} calls on chain ${chainId}.`);
+
+// ─── Kleos Court demo ────────────────────────────────────────────────────────
+const jurors = wallets.slice(6, 14); // 8 tier-V jurors, never betting
+const extras = wallets.slice(14, 19); // extra bettors so markets are deep enough to move reputation
+const traders = [...wallets.slice(0, 6), ...extras];
+
+for (const j of jurors) {
+  await kleos.write.seedReputation([j.account.address, parseEther("40"), 12], { account: owner.account });
+  await kleos.write.joinCourt({ account: j.account });
+  await usd.write.sponsorMint([j.account.address, usdAmount(100)], { account: owner.account }); // bonds for proposing
+}
+for (const e of extras) await usd.write.sponsorMint([e.account.address, usdAmount(1000)], { account: owner.account });
+console.log(`Jury pool: ${jurors.length} tier-V jurors`);
+
+const me = process.env.KLEOS_ME as Address | undefined;
+if (me) {
+  await kleos.write.seedReputation([me, parseEther("20"), 10], { account: owner.account }); // tier IV: can propose
+  await usd.write.sponsorMint([me, usdAmount(1000)], { account: owner.account });
+  await owner.sendTransaction({ to: me, value: parseEther("1") });
+  console.log(`Demo reputation for ${me}: R = 20`);
+}
+
+const now = async () => Number((await publicClient.getBlock()).timestamp);
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+async function createMarket(question: string, category: number, oracle: string, criteria: string, closesIn: number) {
+  const hash = await kleos.write.createMarket([question, category, oracle, criteria, BigInt((await now()) + closesIn)], { account: owner.account });
+  await publicClient.waitForTransactionReceipt({ hash });
+  return await kleos.read.marketCount();
+}
+
+// A market that resolves during seeding: 11 bettors, $1,000+ pool, so reputation really moves.
+const resolved = await createMarket(
+  "Kleos demo: does the first Monad testnet block of the day land under a second?", 3, "Monad testnet explorer",
+  "YES if the first block after 00:00 UTC is produced within 1 second of the previous one.", 25,
+);
+const RESOLVED_BETS: [boolean, number, string?][] = [
+  [true, 150, "Monad's 400ms blocks make this easy"], [true, 120, "Block times haven't slipped all week"], [true, 100],
+  [false, 90, "Midnight is when the batch jobs hit"], [true, 110], [false, 250, "Fading the hype on this one"],
+  [true, 80], [false, 60], [true, 90], [false, 70], [true, 100],
+];
+for (const [i, [side, amount, text]] of RESOLVED_BETS.entries()) {
+  const w = traders[i];
+  if (text) await kleos.write.betWithCall([resolved, side, usdAmount(amount), text], { account: w.account });
+  else await kleos.write.bet([resolved, side, usdAmount(amount)], { account: w.account });
+}
+const waitUntil = async (t: number) => { while ((await now()) < t) { await sleep(1000); await owner.sendTransaction({ to: owner.account.address, value: 0n }); } };
+await waitUntil(Number((await kleos.read.getMarket([resolved])).closeTime));
+await kleos.write.propose([resolved, true, keccak256(new TextEncoder().encode("https://testnet.monadexplorer.com")), "https://testnet.monadexplorer.com"], { account: jurors[0].account });
+console.log(`Market ${resolved} proposed YES; waiting out the dispute window…`);
+await waitUntil(Number((await kleos.read.getMarket([resolved])).proposedAt) + Number(await kleos.read.DISPUTE_WINDOW()));
+await kleos.write.finalize([resolved], { account: owner.account });
+await kleos.write.settle([resolved, await kleos.read.getBettors([resolved])], { account: owner.account });
+console.log(`Market ${resolved} resolved YES and settled: reputation history is real now.`);
+
+// A short market for the live demo: closes a few minutes after seeding.
+const live = await createMarket(
+  "Kleos demo: will the room vote YES on this market?", 4, "Show of hands at the demo",
+  "YES if more than half the room raises a hand when asked.", 240,
+);
+for (const [i, w] of traders.entries()) await kleos.write.bet([live, i % 3 !== 0, usdAmount(50 + i * 10)], { account: w.account });
+console.log(`Market ${live} closes in ~4 minutes: propose, dispute and watch the Kleos Court.`);

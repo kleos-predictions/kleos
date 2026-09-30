@@ -127,6 +127,9 @@ export const MATRIX: { label: string; traditional: string; kleos: string }[] = [
   { label: "Forecaster track record", traditional: "Invisible", kleos: "Public, on-chain, auditable per bet" },
   { label: "Insider long shots", traditional: "Paid out, caught later if at all", kleos: "Flagged, reputation gains held for review" },
   { label: "Payout per dollar", traditional: "Same for everyone", kleos: "Same for everyone, plus a bonus for beating the market" },
+  { label: "Disputes", traditional: "Token-weighted votes, voters may hold positions", kleos: "Kleos Court: 5 random tier-V jurors, no stake, hidden votes, can refund ambiguous markets" },
+  { label: "Opinions", traditional: "Comments, detached from bets and never scored", kleos: "Calls tied to real bets, public before the outcome, scored after it" },
+  { label: "Getting started", traditional: "Wallet extension, seed phrase, bridge funds", kleos: "A passkey. Gas and test money are sponsored" },
 ];
 
 export const FEATURED_CASES = CASES.filter((c) => c.featured);

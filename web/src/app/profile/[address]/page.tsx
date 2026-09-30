@@ -69,7 +69,7 @@ export default async function ProfilePage(props: PageProps<"/profile/[address]">
                   {shortAddress(address)} ↗
                 </a>
               )}
-              <span className="lbl !text-ink">{tier ? `Tier ${TIER_NAMES[tier]}` : "No tier yet"}</span>
+              {tier > 0 && <span className="lbl !text-ink">{`Tier ${TIER_NAMES[tier]}`}</span>}
               {v.flagged && <span className="lbl rounded-full border border-accent px-2 py-0.5 !text-accent">Under review</span>}
             </div>
             {!activated && (

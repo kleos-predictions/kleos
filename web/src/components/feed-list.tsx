@@ -138,7 +138,7 @@ export function FeedList({ items, tabs = true }: { items: FeedItem[]; tabs?: boo
                   <Link href={`/profile/${i.address}`} className="font-medium text-ink">
                     {i.name ? `@${i.name}` : <span className="font-mono">{shortAddress(i.address)}</span>}
                   </Link>
-                  <span className="lbl">{tier ? `Tier ${TIER_NAMES[tier]} · R ${i.r.toFixed(1)}` : "New trader"}</span>
+                  {tier > 0 && <span className="lbl">{`Tier ${TIER_NAMES[tier]} · R ${i.r.toFixed(1)}`}</span>}
                   {sharp && (
                     <span className={`lbl rounded-full border px-2 py-0.5 ${i.side ? "border-accent/60 !text-accent" : "border-lavender/60 !text-lavender"}`}>
                       Sharp

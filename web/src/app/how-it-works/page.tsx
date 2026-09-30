@@ -11,6 +11,10 @@ export const metadata: Metadata = {
 
 const WHY = [
   {
+    title: "Opinions with receipts",
+    body: "Every bet can carry a call: a public one-line reason, written before the outcome and scored after it. Follow the traders who call it early, and see who was right, not who was loudest.",
+  },
+  {
     title: "Glory you earn, not buy",
     body: "Kleos is the Greek word for the renown a person earns through their deeds, carried by what others say about them. Here that renown is your track record: public, non-transferable and impossible to buy.",
   },
@@ -30,15 +34,22 @@ const WHY = [
 
 const STACK = [
   ["Chain", "Monad testnet · EVM, ~400 ms blocks, cheap enough to log every reputation change"],
-  ["Contracts", "Kleos.sol (markets, weighting, payouts, reputation, resolution) · KleosUSD.sol (test stablecoin with faucet)"],
+  ["Contracts", "Kleos.sol (markets, weighting, payouts, reputation, Kleos Court) · KleosSocial.sol (usernames, follows, votes on calls) · KleosUSD.sol (test stablecoin)"],
+  ["Accounts", "Mera passkeys: no wallet, no extension, no seed phrase. The account is derived from the passkey on any device; nothing secret is stored. Gas and test USD are sponsored, so a first bet is one transaction"],
+  ["Sessions", "Prompt-free while unlocked: bets up to $100, follows, votes, settling. The passkey is asked again for bigger bets, bonds, jury votes and the recovery phrase. 15 idle minutes lock the account"],
   ["Verifiability", "ReputationChanged(user, marketId, delta, newR, entryPrice, side, outcome) on every update"],
   ["Resolution", "Propose with a $10 bond → dispute window → finalize. A dispute ($15 bond) goes to the Kleos Court: 5 jurors, commit-reveal votes, 3 of 5 decide"],
+  ["Jury secrets", "A juror's hidden vote is salted with a deterministic passkey signature, so it can be revealed from any device with nothing stored"],
+  ["Social", "Calls: a public 140-character reason attached to a bet, scored when the market resolves. Feed, follows, usernames and ▲▼ votes live on-chain"],
   ["Settlement", "Permissionless: anyone can settle any trader, so losses land even if the loser never comes back"],
   ["Frontend", "Next.js · wagmi / viem · formulas mirrored client-side so every preview matches the contract"],
-  ["Tests", "Hardhat · the pitch numbers (44% vs 71%, $180 payout, +0.70 / −1.43) are asserted against the contract"],
+  ["Tests", "Hardhat · 34 tests; the pitch numbers (44% vs 71%, $180 payout, +0.70 / −1.43) are asserted against the contract"],
 ];
 
-const EVENTS = ["MarketCreated", "BetPlaced", "OutcomeProposed", "OutcomeDisputed", "MarketResolved", "Settled", "ReputationChanged"];
+const EVENTS = [
+  "MarketCreated", "BetPlaced", "CallPosted", "OutcomeProposed", "OutcomeDisputed", "JuryDrawn", "VoteRevealed", "Verdict",
+  "MarketResolved", "Settled", "ReputationChanged", "Followed", "CallVoted", "NameSet",
+];
 
 const FAILURES = [
   {
