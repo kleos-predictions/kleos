@@ -77,11 +77,16 @@ export async function readProfile(user: Address): Promise<LiveProfile> {
   try {
     const logs = await kleosEvents("ReputationChanged", { user });
     const questions = new Map<bigint, string>();
+    const positioned = new Map<bigint, boolean>(); // a bettor's change is a bet; anyone else's is jury duty
     for (const log of logs) {
       const id = log.args.marketId!;
       if (id > 0n && !questions.has(id)) {
-        const m = await publicClient.readContract({ address: KLEOS_ADDRESS!, abi: kleosAbi, functionName: "getMarket", args: [id] });
+        const [m, hasBet] = await Promise.all([
+          publicClient.readContract({ address: KLEOS_ADDRESS!, abi: kleosAbi, functionName: "getMarket", args: [id] }),
+          publicClient.readContract({ address: KLEOS_ADDRESS!, abi: kleosAbi, functionName: "hasBet", args: [id, user] }),
+        ]);
         questions.set(id, m.question);
+        positioned.set(id, hasBet);
       }
     }
     history = logs
@@ -90,8 +95,9 @@ export async function readProfile(user: Address): Promise<LiveProfile> {
         const ts = log.timestamp;
         const entryPrice = Number(a.entryPrice!) / WAD;
         const id = a.marketId!;
-        // Seeds (market 0) and jury duty (no entry price) aren't bets.
-        const kind = id === 0n ? "Genesis seed (demo)" : entryPrice === 0 ? "Jury duty" : null;
+        // Seeds (market 0) and jury duty (no position in the market) aren't bets. The entry price can't
+        // tell them apart: a bet into an empty side also enters at 0.
+        const kind = id === 0n ? "Genesis seed (demo)" : !positioned.get(id) ? "Jury duty" : null;
         return {
           marketId: Number(id),
           question: kind ? `${kind}${id > 0n ? ` · ${questions.get(id)}` : ""}` : questions.get(id) ?? `Market ${id}`,
@@ -121,8 +127,9 @@ export async function readProfile(user: Address): Promise<LiveProfile> {
     pending: Number(rep.pending) / WAD,
     resolvedBets: rep.resolvedBets,
     flagged: rep.flagged,
-    wins: bets.filter((h) => h.delta > 0).length,
-    losses: bets.filter((h) => h.delta < 0).length,
+    // By side vs outcome, not by the sign of ΔR: a loss at R = 0 takes nothing and emits a delta of 0.
+    wins: bets.filter((h) => h.side === h.outcome).length,
+    losses: bets.filter((h) => h.side !== h.outcome).length,
     history,
     historyError,
   };

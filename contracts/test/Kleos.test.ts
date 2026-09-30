@@ -304,6 +304,14 @@ describe("markets and resolution", () => {
     assert.equal((await ctx.kleos.read.getMarket([1n])).evidenceHash, EVIDENCE);
   });
 
+  it("rejects proposals and funding for markets that were never created", async () => {
+    const ctx = await deploy();
+    await networkHelpers.time.increaseTo(ctx.closeTime);
+    await assert.rejects(ctx.kleos.write.propose([99n, true, EVIDENCE, ""], { account: ctx.resolver.account }), /BadState/);
+    await assert.rejects(ctx.kleos.write.propose([0n, true, EVIDENCE, ""], { account: ctx.resolver.account }), /BadState/);
+    await assert.rejects(ctx.kleos.write.fundFromGlobal([99n, 0n]), /BadState/);
+  });
+
   it("cannot finalize while the dispute window is open", async () => {
     const ctx = await deploy();
     await networkHelpers.time.increaseTo(ctx.closeTime);
