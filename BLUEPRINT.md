@@ -228,6 +228,27 @@ Mera is the whole account layer: sign in with a passkey, get test USD, bet. No s
 
 ---
 
+## 5b. Bounty highlights for the demo and pitch
+
+Say these out loud; judges score exactly these points.
+
+**Mera (Best Mera-Powered UX on Monad)**
+- **Time to first transaction:** landing → "Start with passkey" → Touch ID → bet confirmed. The sponsor funds gas and test USD, and kUSD trusts the market, so a first bet is one transaction. The panel shows the seconds it took.
+- **Session design:** bets up to $100, follows, votes on calls, settling and claiming are prompt-free while unlocked. Bets over $100, bonds (propose, dispute), jury votes and the recovery phrase ask for the passkey again. 15 idle minutes lock the session.
+- **The stateless test:** sign out, clear storage, sign in on another device with "I have one" → same address, same profile, same follows (they're on-chain).
+- **Jury votes without storage:** the secret salt behind a hidden (commit-reveal) vote is derived from the passkey itself: a deterministic signature over the market and round. Vote on a laptop, reveal on a phone, nothing saved anywhere.
+- **Recovery:** "Show recovery phrase" re-derives a standard 24-word phrase behind a fresh prompt.
+
+**Envio (Best Use of Envio)**
+- Derived entities no event contains: `Trader` aggregated from six events, `SharpSignal`, and **bet buddies** (traders who won the same markets together).
+- Every reputation change on a profile traces back to its transaction: verifiable end to end.
+
+**Track (Social, Attention & Culture)**
+- Calls: opinions with receipts, scored when markets resolve. Feed with All / Sharps / Following. Follows and usernames on-chain.
+- Kleos Court: disputes judged by earned reputation, not by token whales or the platform.
+
+---
+
 ## 6. Demo script (3 min)
 
 1. **Hook:** "Your track record is worth more than their bankroll." Show the markets page.

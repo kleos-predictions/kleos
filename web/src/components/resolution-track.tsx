@@ -1,11 +1,11 @@
 import { RESOLUTION_STAGES } from "@/lib/data";
 
 /** Five evenly spaced stops joined by dotted lines, lit up to the current stage. */
-export function ResolutionTrack({ stage }: { stage: number }) {
-  const last = RESOLUTION_STAGES.length - 1;
+export function ResolutionTrack({ stage, labels = [...RESOLUTION_STAGES] }: { stage: number; labels?: string[] }) {
+  const last = labels.length - 1;
   return (
     <ol className="grid grid-cols-5" aria-label="Resolution progress">
-      {RESOLUTION_STAGES.map((label, i) => {
+      {labels.map((label, i) => {
         const done = i <= stage;
         return (
           <li key={label} className="relative flex flex-col items-center gap-3 text-center" aria-current={i === stage ? "step" : undefined}>

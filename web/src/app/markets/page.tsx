@@ -1,8 +1,13 @@
 import { MARKETS } from "@/lib/data";
+import { IS_LIVE } from "@/lib/chain";
+import { readExtraMarkets } from "@/lib/onchain";
 import { MarketGrid } from "@/components/market-grid";
 
 export default async function MarketsPage(props: PageProps<"/markets">) {
   const { q } = await props.searchParams;
+  // Markets created on-chain after the sample set (e.g. by the demo seed) show up first.
+  const extra = IS_LIVE ? await readExtraMarkets(MARKETS.length + 1).catch(() => []) : [];
+  const markets = [...extra.reverse(), ...MARKETS];
   return (
     <main className="mx-auto flex w-full max-w-[1440px] flex-1 flex-col gap-7 px-4 pt-10 pb-12 md:px-12">
       <div className="flex flex-wrap items-end justify-between gap-6">
@@ -15,7 +20,7 @@ export default async function MarketsPage(props: PageProps<"/markets">) {
           Monad testnet · all systems operational
         </div>
       </div>
-      <MarketGrid markets={MARKETS} query={typeof q === "string" ? q : ""} />
+      <MarketGrid markets={markets} query={typeof q === "string" ? q : ""} />
     </main>
   );
 }

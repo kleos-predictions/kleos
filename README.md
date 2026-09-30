@@ -20,7 +20,7 @@ Prediction markets are failing in four specific ways. Each one has a direct answ
 - Small crowds of proven forecasters outperform larger crowds in both markets and polls (Atanasov, Witkowski, Mellers & Tetlock, *International Journal of Forecasting*, 2025). [Source](https://www.sciencedirect.com/science/article/abs/pii/S0169207023001413)
 - Across 5,456 Polymarket and Kalshi markets, bigger bettors were not more accurate; in some markets whales had negative edge (Daleep et al., 2026). [Source](https://klementoninvesting.substack.com/p/a-fundamental-flaw-of-prediction)
 
-> **Implementation status:** every answer above is implemented and tested in `contracts/src/Kleos.sol` (22 tests). The testnet deployment is pending.
+> **Implementation status:** every answer above is implemented and tested in `contracts/` (34 tests). The Monad testnet deployment is pending.
 
 ## How it works
 
@@ -30,13 +30,22 @@ Prediction markets are failing in four specific ways. Each one has a direct answ
 | `P_rep = YES_E / total_E`, `P_money = YES$ / total$` | The signal and the money price, side by side |
 | Right: `ΔR = +k·s·(1 − p)` · Wrong: `ΔR = −1.5·k·s·p` | You earn reputation for surprising the market; losses hurt 1.5× more |
 
-The interactive version lives at `/how-it-works` in the app.
+Money pays money: payouts split the losing pool by stake, so newcomers earn the same per dollar as veterans. A 2% fee funds a bonus for winners who beat the market. The interactive version lives at `/how-it-works`.
+
+## What's in the app
+
+- **Passkey accounts (Mera).** No wallet extension, no seed phrase. The account is derived from a passkey and rebuilt on any device; nothing secret is stored. Gas and test USD are sponsored, so a first bet is a single transaction. Sessions lock after 15 idle minutes; bigger bets, bonds and jury votes ask for the passkey again.
+- **Kleos Court.** A disputed outcome goes to 5 randomly drawn tier-V jurors with no position in the market. Votes are committed hidden and revealed later; 3 of 5 decide YES, NO or AMBIGUOUS, which voids the market and refunds everyone. A juror's hidden-vote secret is derived from their passkey, so it can be revealed from any device.
+- **Calls and the feed.** Any bet can carry a call: a public, permanent one-line reason, scored when the market resolves ("Called it" / "Missed"). The feed filters by All, Sharps and Following; calls take ▲▼ votes.
+- **Profiles.** Usernames, follows, reputation over time and a history where every change links to its transaction, with the math shown on hover.
+- **Compare.** Real controversies (the Zelensky suit, Khamenei on Kalshi) replayed on Kleos, including what Kleos would *not* fix.
 
 ## Repository
 
 ```
-contracts/   Solidity (Hardhat 3): Kleos.sol, KleosUSD.sol, tests, Ignition deploy module
-web/         Next.js app: markets, market page, profiles, leaderboard, how it works
+contracts/   Solidity (Hardhat 3): Kleos.sol (markets, reputation, Kleos Court), KleosSocial.sol
+             (usernames, follows, votes), KleosUSD.sol (test stablecoin), tests, deploy and demo scripts
+web/         Next.js app: markets, market page with the court, feed, profiles, compare, how it works
 design/      Reference exports from Claude Design
 BLUEPRINT.md Technical blueprint and roadmap
 ```
@@ -52,6 +61,18 @@ npm --prefix web run dev
 ```
 
 Without contract addresses in `web/.env.local`, the app runs in demo mode with sample data. See `web/.env.example`.
+
+**Full local stack** (a local chain with demo traders, a resolved market and a live court), from `contracts/`, each in its own terminal:
+
+```bash
+npm run node
+```
+
+```bash
+npm run deploy:local && npm run seed:local && npm run court-bot
+```
+
+`deploy:local` writes the addresses into `web/.env.local`. Set `KLEOS_ME=0x…` before `seed:local` to give your passkey account demo reputation, and use `npm run dispute` to send a proposal to the court.
 
 ## Known limitations
 
