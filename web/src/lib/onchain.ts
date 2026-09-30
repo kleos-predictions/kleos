@@ -5,6 +5,7 @@ import { connection } from "next/server";
 import type { Address } from "viem";
 import { kleosAbi } from "./abi";
 import { HAS_LOGS_RPC, KLEOS_ADDRESS, SOCIAL_ADDRESS, logsClient, publicClient } from "./chain";
+import { HAS_HYPERSYNC, hypersyncEvents } from "./hypersync";
 import { kleosSocialAbi } from "./abi";
 import type { Call, FeedItem, Market, RepChange } from "./data";
 
@@ -32,6 +33,29 @@ async function inChunks<T>(read: (fromBlock: bigint, toBlock: bigint) => Promise
   return out;
 }
 
+type KleosEvent = "ReputationChanged" | "CallPosted";
+type TimedLog<E extends KleosEvent> = {
+  args: Awaited<ReturnType<typeof logsClient.getContractEvents<typeof kleosAbi, E>>>[number]["args"];
+  blockNumber: bigint;
+  transactionHash: `0x${string}`;
+  timestamp: number;
+};
+
+/** One Kleos event since the deploy block, with block timestamps: HyperSync when configured, RPC otherwise. */
+async function kleosEvents<E extends KleosEvent>(eventName: E, args: Record<string, unknown>): Promise<TimedLog<E>[]> {
+  if (HAS_HYPERSYNC) {
+    return hypersyncEvents({ address: KLEOS_ADDRESS!, abi: kleosAbi, eventName, args, fromBlock: DEPLOY_BLOCK }) as Promise<TimedLog<E>[]>;
+  }
+  const logs = await inChunks((fromBlock, toBlock) =>
+    logsClient.getContractEvents({ address: KLEOS_ADDRESS!, abi: kleosAbi, eventName, args, fromBlock, toBlock } as never),
+  );
+  const times = new Map<bigint, number>();
+  for (const log of logs as { blockNumber: bigint }[]) {
+    if (!times.has(log.blockNumber)) times.set(log.blockNumber, Number((await publicClient.getBlock({ blockNumber: log.blockNumber })).timestamp));
+  }
+  return (logs as unknown as TimedLog<E>[]).map((l) => ({ ...l, timestamp: times.get(l.blockNumber)! }));
+}
+
 export type LiveProfile = {
   name?: string;
   r: number;
@@ -51,16 +75,9 @@ export async function readProfile(user: Address): Promise<LiveProfile> {
   let history: RepChange[] = [];
   let historyError = false;
   try {
-    const logs = await inChunks((fromBlock, toBlock) =>
-      logsClient.getContractEvents({ address: KLEOS_ADDRESS!, abi: kleosAbi, eventName: "ReputationChanged", args: { user }, fromBlock, toBlock }),
-    );
-    const blocks = new Map<bigint, number>();
+    const logs = await kleosEvents("ReputationChanged", { user });
     const questions = new Map<bigint, string>();
     for (const log of logs) {
-      if (!blocks.has(log.blockNumber)) {
-        const b = await publicClient.getBlock({ blockNumber: log.blockNumber });
-        blocks.set(log.blockNumber, Number(b.timestamp));
-      }
       const id = log.args.marketId!;
       if (id > 0n && !questions.has(id)) {
         const m = await publicClient.readContract({ address: KLEOS_ADDRESS!, abi: kleosAbi, functionName: "getMarket", args: [id] });
@@ -70,7 +87,7 @@ export async function readProfile(user: Address): Promise<LiveProfile> {
     history = logs
       .map((log) => {
         const a = log.args;
-        const ts = blocks.get(log.blockNumber)!;
+        const ts = log.timestamp;
         const entryPrice = Number(a.entryPrice!) / WAD;
         const id = a.marketId!;
         // Seeds (market 0) and jury duty (no entry price) aren't bets.
@@ -119,16 +136,8 @@ const ago = (seconds: number) => {
 /** Latest calls, from CallPosted events: one market's, or every market's for the feed. */
 async function readCallLogs(marketId: number | undefined, limit: number, user?: Address) {
   await connection(); // live chain data: render per request, never at build time
-  const logs = await inChunks((fromBlock, toBlock) =>
-    logsClient.getContractEvents({
-      address: KLEOS_ADDRESS!,
-      abi: kleosAbi,
-      eventName: "CallPosted",
-      args: { ...(marketId ? { marketId: BigInt(marketId) } : {}), ...(user ? { user } : {}) },
-      fromBlock,
-      toBlock,
-    }),
-  );
+  const logs = await kleosEvents("CallPosted", { ...(marketId ? { marketId: BigInt(marketId) } : {}), ...(user ? { user } : {}) });
+
   const latest = logs.slice(-limit).reverse();
   const now = Math.floor(Date.now() / 1000);
   const reps = new Map<string, number>();
@@ -140,7 +149,6 @@ async function readCallLogs(marketId: number | undefined, limit: number, user?: 
         const rep = await publicClient.readContract({ address: KLEOS_ADDRESS!, abi: kleosAbi, functionName: "reputation", args: [user] });
         reps.set(user, Number(rep.r) / WAD);
       }
-      const block = await publicClient.getBlock({ blockNumber: log.blockNumber });
       const call: Call = {
         id: Number(a.callId!), // numbered by the contract; votes use the same id
         address: user,
@@ -149,7 +157,7 @@ async function readCallLogs(marketId: number | undefined, limit: number, user?: 
         amount: Number(a.amount!) / 1e6,
         entryPrice: Number(a.entryPrice!) / WAD,
         text: a.text!,
-        ago: ago(now - Number(block.timestamp)),
+        ago: ago(now - log.timestamp),
       };
       return { call, marketId: Number(a.marketId!) };
     }),
