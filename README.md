@@ -49,6 +49,7 @@ Money pays money: payouts split the losing pool by stake, so newcomers earn the 
 contracts/   Solidity (Hardhat 3): Kleos.sol (markets, reputation, Kleos Court), KleosSocial.sol
              (usernames, follows, votes), KleosUSD.sol (test stablecoin), tests, deploy and demo scripts
 web/         Next.js app: markets, market page with the court, feed, profiles, compare, how it works
+brand/       Brand kit: logos, tier laurels, palette, typography, icons (see brand/README.md)
 design/      Reference exports from Claude Design
 ```
 
