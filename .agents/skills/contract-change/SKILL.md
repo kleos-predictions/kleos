@@ -34,7 +34,7 @@ For a new contract, add it to the list in `contracts/scripts/export-abi.mjs` and
 | A formula (multiplier, quote/boost cap, ΔR, payout, fee) | The matching function in `web/src/lib/math.ts`, and `explainChange` if it's a ΔR |
 | Tier thresholds, `RESOLVER_MIN_R`, `JUROR_MIN_R` | `web/src/lib/tiers.ts` and the copy that names tiers |
 | A custom error users can hit | `CONTRACT_ERRORS` in `web/src/lib/mera.ts` (plain-language message) |
-| An event or its fields | `web/src/lib/onchain.ts` readers, the indexer's `config.yaml` and handlers (see `envio-indexer`) |
+| An event or its fields | `web/src/lib/onchain.ts` and `web/src/lib/hypersync.ts` readers; in the indexer, the event lists in **both** `indexer/config.yaml` (local) and `indexer/config.testnet.yaml`, the handlers, their tests and `indexer/ARCHITECTURE.md` (see `envio-indexer`) |
 | Bonds, windows, fees quoted in copy ($10 / $15 / $25 + $2, 2% + 1%, 7 days) | `web/src/app/market/[id]/page.tsx`, `web/src/app/how-it-works/page.tsx`, `web/src/lib/cases.ts` |
 
 Then build the web app so type errors from the new ABI surface:
