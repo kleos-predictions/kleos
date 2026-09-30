@@ -74,7 +74,7 @@ npm run node
 npm run deploy:local && npm run seed:local && npm run court-bot
 ```
 
-`deploy:local` writes the addresses into `web/.env.local`. Set `KLEOS_ME=0x…` before `seed:local` to give your passkey account demo reputation, and use `npm run dispute` to send a proposal to the court.
+`deploy:local` writes the addresses into `web/.env.local`. On Monad testnet, set `MONAD_LOGS_RPC` (Envio HyperRPC) in the web server's env: the public RPC serves event logs 100 blocks at a time. Set `KLEOS_ME=0x…` before `seed:local` to give your passkey account demo reputation, and use `npm run dispute` to send a proposal to the court.
 
 ## Known limitations
 

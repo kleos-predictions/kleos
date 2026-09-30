@@ -4,13 +4,33 @@
 import { connection } from "next/server";
 import type { Address } from "viem";
 import { kleosAbi } from "./abi";
-import { KLEOS_ADDRESS, SOCIAL_ADDRESS, publicClient } from "./chain";
+import { HAS_LOGS_RPC, KLEOS_ADDRESS, SOCIAL_ADDRESS, logsClient, publicClient } from "./chain";
 import { kleosSocialAbi } from "./abi";
 import type { Call, FeedItem, Market, RepChange } from "./data";
 
 const WAD = 1e18;
 const DEPLOY_BLOCK = BigInt(process.env.NEXT_PUBLIC_KLEOS_DEPLOY_BLOCK ?? "0");
 const DAY = new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric", timeZone: "UTC" });
+
+/**
+ * Event reads over block ranges. With HyperRPC (or the local node) one call covers everything.
+ * The public Monad RPC allows 100 blocks per eth_getLogs, so without it we fan out in parallel
+ * batches. The Envio indexer replaces this for long histories.
+ */
+async function inChunks<T>(read: (fromBlock: bigint, toBlock: bigint) => Promise<T[]>): Promise<T[]> {
+  const latest = await publicClient.getBlockNumber();
+  if (HAS_LOGS_RPC) return read(DEPLOY_BLOCK, latest);
+  const SIZE = 100n;
+  const PARALLEL = 8;
+  const ranges: [bigint, bigint][] = [];
+  for (let from = DEPLOY_BLOCK; from <= latest; from += SIZE) ranges.push([from, from + SIZE - 1n < latest ? from + SIZE - 1n : latest]);
+  const out: T[] = [];
+  for (let i = 0; i < ranges.length; i += PARALLEL) {
+    const batch = await Promise.all(ranges.slice(i, i + PARALLEL).map(([f, t]) => read(f, t)));
+    for (const logs of batch) out.push(...logs);
+  }
+  return out;
+}
 
 export type LiveProfile = {
   name?: string;
@@ -31,13 +51,9 @@ export async function readProfile(user: Address): Promise<LiveProfile> {
   let history: RepChange[] = [];
   let historyError = false;
   try {
-    const logs = await publicClient.getContractEvents({
-      address: KLEOS_ADDRESS!,
-      abi: kleosAbi,
-      eventName: "ReputationChanged",
-      args: { user },
-      fromBlock: DEPLOY_BLOCK,
-    });
+    const logs = await inChunks((fromBlock, toBlock) =>
+      logsClient.getContractEvents({ address: KLEOS_ADDRESS!, abi: kleosAbi, eventName: "ReputationChanged", args: { user }, fromBlock, toBlock }),
+    );
     const blocks = new Map<bigint, number>();
     const questions = new Map<bigint, string>();
     for (const log of logs) {
@@ -103,13 +119,16 @@ const ago = (seconds: number) => {
 /** Latest calls, from CallPosted events: one market's, or every market's for the feed. */
 async function readCallLogs(marketId: number | undefined, limit: number, user?: Address) {
   await connection(); // live chain data: render per request, never at build time
-  const logs = await publicClient.getContractEvents({
-    address: KLEOS_ADDRESS!,
-    abi: kleosAbi,
-    eventName: "CallPosted",
-    args: { ...(marketId ? { marketId: BigInt(marketId) } : {}), ...(user ? { user } : {}) },
-    fromBlock: DEPLOY_BLOCK,
-  });
+  const logs = await inChunks((fromBlock, toBlock) =>
+    logsClient.getContractEvents({
+      address: KLEOS_ADDRESS!,
+      abi: kleosAbi,
+      eventName: "CallPosted",
+      args: { ...(marketId ? { marketId: BigInt(marketId) } : {}), ...(user ? { user } : {}) },
+      fromBlock,
+      toBlock,
+    }),
+  );
   const latest = logs.slice(-limit).reverse();
   const now = Math.floor(Date.now() / 1000);
   const reps = new Map<string, number>();
