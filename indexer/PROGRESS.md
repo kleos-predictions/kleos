@@ -89,9 +89,9 @@ Daniela's `seed-demo.ts` on `main` (commit `3a8d383`) now resolves and settles a
 
 ## For Daniela (found while indexing, not changed by us)
 
-- **`web/src/lib/onchain.ts` counts wins and losses by the sign of delta**, which misses losses at R = 0 (the contract emits delta 0). Use `side == outcome`, as the indexer does.
+- ~~**`web/src/lib/onchain.ts` counts wins and losses by the sign of delta**~~: fixed, it now counts by `side == outcome` and tells jury changes from bets by `hasBet`, not by `entryPrice == 0`.
 
-- **`Kleos.propose` and `fundFromGlobal` accept market ids that were never created** (still true on `main` as of `c72c3a2`). A missing id reads as state Open with closeTime 0, so both guards pass. Verified with a dry-run call on the local chain: `propose(99, …)` and `propose(0, …)` from a tier-II trader would succeed, then finalize, dispute, the court and settle all work on the phantom market, and a bond gets locked in it. `sponsor()` already checks `id == 0 || id > marketCount`; the same check belongs in `propose` and `fundFromGlobal`. It's a contract change, so it has to land before the testnet deploy. The indexer now skips these events instead of halting (`knownMarket` in `src/handlers/markets.ts`).
+- ~~**`Kleos.propose` and `fundFromGlobal` accept market ids that were never created**~~: fixed before the testnet deploy (`id == 0 || id > marketCount` reverts `BadState`, with a test). The original note: (still true on `main` as of `c72c3a2`). A missing id reads as state Open with closeTime 0, so both guards pass. Verified with a dry-run call on the local chain: `propose(99, …)` and `propose(0, …)` from a tier-II trader would succeed, then finalize, dispute, the court and settle all work on the phantom market, and a bond gets locked in it. `sponsor()` already checks `id == 0 || id > marketCount`; the same check belongs in `propose` and `fundFromGlobal`. It's a contract change, so it has to land before the testnet deploy. The indexer now skips these events instead of halting (`knownMarket` in `src/handlers/markets.ts`).
 
 - ~~Seed voted on the wrong call ids~~: fixed by #4, then superseded by the contract numbering calls (`c72c3a2`).
 

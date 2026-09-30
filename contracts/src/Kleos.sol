@@ -324,7 +324,7 @@ contract Kleos {
 
     /// @notice Moves rolled-over bonus into a market, e.g. to seed a new one.
     function fundFromGlobal(uint256 id, uint256 amount) external onlyOwner {
-        if (_markets[id].state == State.Resolved) revert BadState();
+        if (id == 0 || id > marketCount || _markets[id].state == State.Resolved) revert BadState();
         globalBonusPool -= amount;
         payouts[id].bonusPool += amount;
         emit Sponsored(id, address(this), amount);
@@ -432,6 +432,8 @@ contract Kleos {
 
     // ─── Resolution: propose → dispute window → finalize, or the Kleos Court ────
     function propose(uint256 id, bool outcome, bytes32 evidenceHash, string calldata evidenceURI) external {
+        // A market that was never created reads as Open with closeTime 0, so check existence first.
+        if (id == 0 || id > marketCount) revert BadState();
         Market storage m = _markets[id];
         if (m.state != State.Open) revert BadState();
         if (block.timestamp < m.closeTime) revert MarketNotClosed();
