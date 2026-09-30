@@ -78,7 +78,9 @@ const CONTRACT_ERRORS: Record<string, string> = {
   MarketClosed: "This market is closed for betting.",
   BetTooSmall: "The minimum bet is $1.",
   CallTooLong: "Your call is over 140 characters.",
-  NotEligibleResolver: "You need tier II and no position in this market to do that.",
+  NotEligibleResolver: "You need tier II, no position in this market, and not to be its creator.",
+  NotEligibleCreator: "Creating markets takes tier V (R ≥ 36).",
+  BadCloseTime: "The close time has to be in the future.",
   NameTaken: "That username is taken.",
   BadName: "Usernames are 3–20 characters: a–z, 0–9 and _.",
 };

@@ -14,7 +14,7 @@ interface IERC20 {
 ///   Multiplier     M  = min(1 + α·√R, M_max)          (1.0 until N_MIN resolved bets)
 ///   Effective bet  E  = m · M                          (drives the reputation-weighted price only)
 ///   Prices         P_money = YES$ / total$     P_rep = YES_E / total_E
-///   Payout         m + (m / ΣwinningMoney) · (L − fee)       fee = FEE_BPS of the losing pool L
+///   Payout         m + (m / ΣwinningMoney) · (L − fees)      fees = FEE_BPS (bonus) + PROTOCOL_FEE_BPS of L
 ///   Bonus          bonusPool · w / Σw,  w = ΔR⁺ · M          (winners with positive ΔR)
 ///   Reputation     right: ΔR = +k·s·(1 − p)   wrong: ΔR = −λ·k·s·p
 ///                  p = rep-weighted price of the chosen side at entry, s = min(m / $50, 1)
@@ -42,12 +42,16 @@ contract Kleos {
     uint256 public constant MAX_CALL_BYTES = 140; // a call: the public one-line reason behind a bet
     uint256 public constant BOND = 10e6; // resolution bond
     uint256 public constant FEE_BPS = 200; // 2% of the losing pool funds the market's bonus
+    uint256 public constant PROTOCOL_FEE_BPS = 100; // 1% of the losing pool is protocol revenue
     uint256 public constant DELTA_R_MAX = 0.8e18; // max reputation gain from a single market (blunts long-shot windfalls)
     uint256 public constant MIN_REP_POOL = 1_000e6; // reputation only moves in markets this deep…
     uint256 public constant MIN_BETTORS = 10; // …with at least this many distinct bettors
     uint256 public constant FLAG_PRICE = 0.1e18; // long-shot threshold for the anomaly flag
     uint256 public constant FLAG_SIZE = 100e6; // size threshold for the anomaly flag
     uint256 public constant RESOLVER_MIN_R = 4e18; // tier II to propose
+    uint256 public constant CREATOR_MIN_R = 36e18; // tier V (or the team) to create markets
+    uint256 public constant CREATION_BOND = 25e6; // back on a clean resolution, lost if the court rules AMBIGUOUS
+    uint256 public constant CREATION_FEE = 2e6; // protocol revenue per market
 
     // Kleos Court
     uint256 public constant DISPUTE_BOND = 15e6; // disputing just because you lost costs money
@@ -88,6 +92,8 @@ contract Kleos {
         uint64 proposedAt;
         address proposer;
         address disputer;
+        address creator;
+        uint256 creatorBond;
         bytes32 evidenceHash;
         string evidenceURI;
         uint256 yesMoney;
@@ -129,6 +135,7 @@ contract Kleos {
     address public owner;
     uint256 public marketCount;
     uint256 public globalBonusPool;
+    uint256 public protocolRevenue; // accrued, withdrawable by the owner
 
     mapping(uint8 => string) public categoryName; // allowlist: unset = not allowed
     mapping(uint256 => Market) internal _markets;
@@ -151,7 +158,10 @@ contract Kleos {
 
     // ─── Events ────────────────────────────────────────────────────────────────
     event CategoryAdded(uint8 indexed id, string name);
-    event MarketCreated(uint256 indexed marketId, string question, uint8 category, string oracle, string criteria, uint64 closeTime);
+    event MarketCreated(
+        uint256 indexed marketId, address indexed creator, string question, uint8 category, string oracle, string criteria, uint64 closeTime
+    );
+    event CreatorBondReleased(uint256 indexed marketId, address indexed creator, uint256 amount, bool forfeited);
     event BetPlaced(
         uint256 indexed marketId,
         address indexed user,
@@ -170,6 +180,8 @@ contract Kleos {
     event OutcomeProposed(uint256 indexed marketId, address indexed proposer, bool outcome, bytes32 evidenceHash, string evidenceURI);
     event OutcomeDisputed(uint256 indexed marketId, address indexed disputer);
     event MarketResolved(uint256 indexed marketId, bool outcome, uint256 fee);
+    event RevenueAccrued(uint256 indexed marketId, uint256 amount);
+    event RevenueWithdrawn(address indexed to, uint256 amount);
     event MarketVoided(uint256 indexed marketId);
     event JurorJoined(address indexed juror);
     event JurorLeft(address indexed juror);
@@ -208,6 +220,8 @@ contract Kleos {
     error WindowOpen();
     error WindowClosed();
     error NotEligibleResolver();
+    error NotEligibleCreator();
+    error BadCloseTime();
     error NotEligibleJuror();
     error NotJuror();
     error BadVote();
@@ -250,16 +264,27 @@ contract Kleos {
         string calldata oracle,
         string calldata criteria,
         uint64 closeTime
-    ) external onlyOwner returns (uint256 id) {
+    ) external returns (uint256 id) {
         if (bytes(categoryName[category]).length == 0) revert BadCategory();
+        if (closeTime <= block.timestamp) revert BadCloseTime();
         id = ++marketCount;
         Market storage m = _markets[id];
+        m.creator = msg.sender;
+        // The team creates for free. Tier-V traders post a bond (back on a clean resolution) plus a fee.
+        if (msg.sender != owner) {
+            Rep storage rep = _rep[msg.sender];
+            if (rep.r < CREATOR_MIN_R || rep.flagged) revert NotEligibleCreator();
+            _pull(msg.sender, CREATION_BOND + CREATION_FEE);
+            m.creatorBond = CREATION_BOND;
+            protocolRevenue += CREATION_FEE;
+            emit RevenueAccrued(id, CREATION_FEE);
+        }
         m.question = question;
         m.category = category;
         m.oracle = oracle;
         m.criteria = criteria;
         m.closeTime = closeTime;
-        emit MarketCreated(id, question, category, oracle, criteria, closeTime);
+        emit MarketCreated(id, msg.sender, question, category, oracle, criteria, closeTime);
     }
 
     /// @notice Demo-only starting state. Emitted as a public ReputationChanged with marketId 0.
@@ -284,6 +309,14 @@ contract Kleos {
         uint256 taken = fromPending + _takeReputation(rep, amount - fromPending);
         emit Slashed(user, taken);
         emit ReputationChanged(user, 0, -int256(taken), _rep[user].r, _rep[user].pending, 0, false, false);
+    }
+
+    /// @notice Sends accrued protocol revenue to the treasury.
+    function withdrawRevenue(address to) external onlyOwner {
+        uint256 amount = protocolRevenue;
+        protocolRevenue = 0;
+        _push(to, amount);
+        emit RevenueWithdrawn(to, amount);
     }
 
     /// @notice Moves rolled-over bonus into a market, e.g. to seed a new one.
@@ -435,7 +468,9 @@ contract Kleos {
     /// @dev Resolvers need earned reputation and no stake in the market they judge.
     function _requireResolver(uint256 id) internal view {
         Rep storage rep = _rep[msg.sender];
-        if (hasBet[id][msg.sender] || rep.flagged || rep.r < RESOLVER_MIN_R) revert NotEligibleResolver();
+        if (hasBet[id][msg.sender] || rep.flagged || rep.r < RESOLVER_MIN_R || msg.sender == _markets[id].creator) {
+            revert NotEligibleResolver();
+        }
     }
 
     function _resolve(uint256 id, bool outcome) internal {
@@ -444,10 +479,25 @@ contract Kleos {
         m.outcome = outcome;
         uint256 winMoney = outcome ? m.yesMoney : m.noMoney;
         uint256 losingMoney = outcome ? m.noMoney : m.yesMoney;
-        // No fee when nobody picked the winner: everyone is refunded in full.
+        // No fees when nobody picked the winner: everyone is refunded in full.
         uint256 fee = winMoney == 0 ? 0 : (losingMoney * FEE_BPS) / 10_000;
+        uint256 revenue = winMoney == 0 ? 0 : (losingMoney * PROTOCOL_FEE_BPS) / 10_000;
         payouts[id].bonusPool += fee;
+        protocolRevenue += revenue;
         emit MarketResolved(id, outcome, fee);
+        if (revenue > 0) emit RevenueAccrued(id, revenue);
+        _releaseCreatorBond(id, m, false);
+    }
+
+    /// @dev A clear question gets its bond back. One the court rules AMBIGUOUS loses it to the
+    ///      global bonus pool, so writing vague markets costs the person who wrote them.
+    function _releaseCreatorBond(uint256 id, Market storage m, bool forfeit) internal {
+        uint256 bond = m.creatorBond;
+        if (bond == 0) return;
+        m.creatorBond = 0;
+        if (forfeit) globalBonusPool += bond;
+        else _push(m.creator, bond);
+        emit CreatorBondReleased(id, m.creator, bond, forfeit);
     }
 
     function _void(uint256 id, Market storage m) internal {
@@ -501,7 +551,7 @@ contract Kleos {
 
     function _eligibleJuror(uint256 id, Market storage m, uint8 round, address j) internal view returns (bool) {
         Rep storage rep = _rep[j];
-        if (rep.r < JUROR_MIN_R || rep.flagged || hasBet[id][j] || j == m.proposer || j == m.disputer) return false;
+        if (rep.r < JUROR_MIN_R || rep.flagged || hasBet[id][j] || j == m.proposer || j == m.disputer || j == m.creator) return false;
         if (_onJury(id, round, j)) return false; // already drawn this round
         return round == 1 || !_onJury(id, round - 1, j); // a redraw brings fresh eyes
     }
@@ -561,6 +611,7 @@ contract Kleos {
             }
             // The court failed: refund everyone. Only jurors whose absence broke quorum pay for it.
             _void(id, m);
+            _releaseCreatorBond(id, m, false); // the court failed, not the question
             for (uint8 r = 1; r <= round; ++r) {
                 if (_lackedQuorum[id][r]) _penalizeNoShows(id, r);
             }
@@ -573,6 +624,7 @@ contract Kleos {
         _scoreJurors(id, round, verdict);
         if (verdict == VOTE_AMBIGUOUS) {
             _void(id, m);
+            _releaseCreatorBond(id, m, true);
             _push(m.proposer, BOND);
             _push(m.disputer, DISPUTE_BOND);
         } else {
@@ -663,7 +715,8 @@ contract Kleos {
         if (winMoney == 0) {
             payout = win.money + lose.money; // nobody picked the winner: refund
         } else if (win.money > 0) {
-            uint256 distributable = losingMoney - (losingMoney * FEE_BPS) / 10_000;
+            uint256 distributable =
+                losingMoney - (losingMoney * FEE_BPS) / 10_000 - (losingMoney * PROTOCOL_FEE_BPS) / 10_000;
             payout = win.money + (win.money * distributable) / winMoney;
         }
 

@@ -120,6 +120,7 @@ export const CASES: Case[] = [
 ];
 
 export const MATRIX: { label: string; traditional: string; kleos: string }[] = [
+  { label: "Who creates markets", traditional: "The platform's team", kleos: "The team and tier-V traders, with a bond they lose if the question is ruled ambiguous" },
   { label: "Who sets the price", traditional: "Money only", kleos: "Money, plus a reputation-weighted price beside it" },
   { label: "Who resolves", traditional: "Token holders or the platform", kleos: "Earned reputation, no position in the market" },
   { label: "Resolution rules", traditional: "Often clarified after the fact", kleos: "Written on-chain before the first bet, shown before you confirm" },

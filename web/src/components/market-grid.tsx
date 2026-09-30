@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import Link from "next/link";
 import { CATEGORIES, type Category, type Market } from "@/lib/data";
 import { MarketCard } from "./market-card";
 
@@ -21,7 +22,12 @@ export function MarketGrid({ markets, query = "" }: { markets: Market[]; query?:
             </button>
           ))}
         </div>
-        <span className="lbl">Sort · trending</span>
+        <div className="flex items-center gap-4">
+          <span className="lbl">Sort · trending</span>
+          <Link href="/create" className="btn btn-no !min-h-10">
+            + Create market
+          </Link>
+        </div>
       </div>
 
       {shown.length ? (

@@ -190,6 +190,9 @@ export async function readLiveMarket(id: number): Promise<Market | null> {
   ]);
   const rep = Number(repYes) / WAD;
   const money = Number(moneyYes) / WAD;
+  const owner = await publicClient.readContract({ address: KLEOS_ADDRESS!, abi: kleosAbi, functionName: "owner" });
+  const byTeam = m.creator.toLowerCase() === owner.toLowerCase();
+  const creatorName = byTeam ? undefined : (await readNames([m.creator]).catch(() => new Map<string, string>())).get(m.creator.toLowerCase());
   const closeMs = Number(m.closeTime) * 1000;
   const status: Market["status"] = m.state === 3 ? "resolved" : m.state >= 1 ? "dispute" : closeMs - Date.now() < 86_400_000 ? "closing" : "live";
   return {
@@ -199,7 +202,8 @@ export async function readLiveMarket(id: number): Promise<Market | null> {
     status,
     oracle: m.oracle,
     criteria: m.criteria,
-    type: "Community market",
+    creator: byTeam ? undefined : { address: m.creator, name: creatorName },
+    type: byTeam ? "Curated" : "Community market",
     closesAt: new Date(closeMs).toLocaleString("en-US", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit", timeZone: "UTC" }) + " UTC",
     volume: Number(m.yesMoney + m.noMoney) / 1e6,
     bettors: bettors.length,
