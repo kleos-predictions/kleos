@@ -1,13 +1,14 @@
 // Demo jurors for the Kleos Court. Watches for disputed markets, and for every demo juror drawn
 // it commits a hidden vote, reveals it when the reveal phase opens, then closes the court.
 //
-//   KLEOS_BOT_VOTE=uphold npx hardhat run scripts/court-bot.ts --network localhost
+//   KLEOS_BOT_VOTE=uphold npx hardhat run scripts/court-bot.ts --network localhost   (or --network monadTestnet)
 //
 // KLEOS_BOT_VOTE: "uphold" (vote the proposed outcome, default), "overturn", "yes", "no" or
 // "ambiguous". One demo juror always sits out, to show that 3 of 5 is enough.
 import { network } from "hardhat";
 import { readFileSync } from "node:fs";
 import { keccak256, toHex, type Address, type Hex } from "viem";
+import { LOCAL_CHAIN_ID, ROLES, getDemoWallets } from "./demo-wallets.ts";
 
 const { viem } = await network.getOrCreate();
 const publicClient = await viem.getPublicClient();
@@ -15,8 +16,9 @@ const chainId = await publicClient.getChainId();
 const deployed = JSON.parse(readFileSync(`ignition/deployments/chain-${chainId}/deployed_addresses.json`, "utf8"));
 const kleos = await viem.getContractAt("Kleos", deployed["KleosModule#Kleos"] as Address);
 
-const [owner, ...wallets] = await viem.getWalletClients();
-const jurors = new Map(wallets.slice(6, 14).map((w) => [w.account.address.toLowerCase(), w]));
+const [owner] = await viem.getWalletClients();
+const wallets = await getDemoWallets(viem, chainId);
+const jurors = new Map(wallets.slice(...ROLES.jurors).map((w) => [w.account.address.toLowerCase(), w]));
 const mode = (process.env.KLEOS_BOT_VOTE ?? "uphold").toLowerCase();
 const DISPUTED = 2;
 
@@ -35,8 +37,8 @@ function voteFor(proposed: boolean): number {
 
 console.log(`Court bot watching ${jurors.size} demo jurors (vote: ${mode}). Ctrl+C to stop.`);
 for (;;) {
-  // Keep blocks coming so timestamps move on an idle local node.
-  await owner.sendTransaction({ to: owner.account.address, value: 0n });
+  // Keep blocks coming so timestamps move on an idle local node (testnet produces them anyway).
+  if (chainId === LOCAL_CHAIN_ID) await owner.sendTransaction({ to: owner.account.address, value: 0n });
   const count = Number(await kleos.read.marketCount());
   for (let id = 1n; id <= BigInt(count); id++) {
     const m = await kleos.read.getMarket([id]);

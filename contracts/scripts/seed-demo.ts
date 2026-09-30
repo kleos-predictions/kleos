@@ -2,16 +2,19 @@
 // as marketId 0 seeds), bets with calls, follows and votes.
 //
 //   KLEOS_ME=0xYourAddress npx hardhat run scripts/seed-demo.ts --network localhost
+//   KLEOS_ME=0xYourAddress npx hardhat run scripts/seed-demo.ts --network monadTestnet
 //
 // Also sets up the Kleos Court demo: a jury pool, one market resolved for real (so profiles have
 // genuine reputation history) and one short market that closes a few minutes after seeding.
 // KLEOS_ME (optional) gets demo reputation so that account can propose outcomes live.
 //
-// Local only for now: it uses the node's pre-funded accounts. The testnet version funds fresh
-// wallets from the deployer instead.
+// Locally it uses the node's pre-funded accounts. On testnet it derives demo wallets (see
+// demo-wallets.ts) and funds them from the deployer, which must still be KleosUSD's sponsor:
+// run this before setup-sponsor.
 import { readFileSync } from "node:fs";
 import { network } from "hardhat";
-import { encodeAbiParameters, encodeEventTopics, keccak256, parseEther, parseUnits, type Address, type Hex } from "viem";
+import { keccak256, parseEther, parseEventLogs, parseUnits, type Address } from "viem";
+import { LOCAL_CHAIN_ID, fundDemoWallets, getDemoWallets } from "./demo-wallets.ts";
 
 const { viem } = await network.getOrCreate();
 const publicClient = await viem.getPublicClient();
@@ -22,7 +25,10 @@ const kleos = await viem.getContractAt("Kleos", deployed["KleosModule#Kleos"] as
 const usd = await viem.getContractAt("KleosUSD", deployed["KleosModule#KleosUSD"] as Address);
 const social = await viem.getContractAt("KleosSocial", deployed["KleosModule#KleosSocial"] as Address);
 
-const [owner, ...wallets] = await viem.getWalletClients();
+const [owner] = await viem.getWalletClients();
+const LOCAL = chainId === LOCAL_CHAIN_ID;
+const wallets = await getDemoWallets(viem, chainId);
+await fundDemoWallets(owner, wallets, publicClient, chainId);
 const usdAmount = (n: number) => parseUnits(String(n), 6);
 
 type Persona = { name: string; r: number; resolved: number; cash: number; bets: [number, boolean, number, string?][] };
@@ -47,9 +53,8 @@ const PERSONAS: Persona[] = [
   { name: "whale_watcher", r: 0, resolved: 0, cash: 3000, bets: [[1, false, 2000, "Too much optimism, fading it"]] },
 ];
 
-const calls: { id: Hex; author: number }[] = [];
+const calls: { id: bigint; author: number }[] = [];
 // A call's id comes from its CallPosted log. BetPlaced in the same tx also has 3 topics, so match the event.
-const [CALL_POSTED] = encodeEventTopics({ abi: kleos.abi, eventName: "CallPosted" });
 
 for (const [i, p] of PERSONAS.entries()) {
   const w = wallets[i];
@@ -67,8 +72,8 @@ for (const [i, p] of PERSONAS.entries()) {
       : await kleos.write.bet([BigInt(marketId), side, usdAmount(amount)], { account: w.account });
     const receipt = await publicClient.waitForTransactionReceipt({ hash });
     if (text) {
-      const log = receipt.logs.find((l) => l.address.toLowerCase() === kleos.address.toLowerCase() && l.topics[0] === CALL_POSTED)!;
-      calls.push({ id: keccak256(encodeAbiParameters([{ type: "bytes32" }, { type: "uint256" }], [hash, BigInt(log.logIndex!)])), author: i });
+      const [posted] = parseEventLogs({ abi: kleos.abi, eventName: "CallPosted", logs: receipt.logs });
+      calls.push({ id: posted.args.callId, author: i });
     }
   }
   console.log(`@${p.name} ${a}  R=${p.r}`);
@@ -107,7 +112,7 @@ const me = process.env.KLEOS_ME as Address | undefined;
 if (me) {
   await kleos.write.seedReputation([me, parseEther("20"), 10], { account: owner.account }); // tier IV: can propose
   await usd.write.sponsorMint([me, usdAmount(1000)], { account: owner.account });
-  await owner.sendTransaction({ to: me, value: parseEther("1") });
+  await owner.sendTransaction({ to: me, value: parseEther(LOCAL ? "1" : "0.05") });
   console.log(`Demo reputation for ${me}: R = 20`);
 }
 
@@ -134,7 +139,13 @@ for (const [i, [side, amount, text]] of RESOLVED_BETS.entries()) {
   if (text) await kleos.write.betWithCall([resolved, side, usdAmount(amount), text], { account: w.account });
   else await kleos.write.bet([resolved, side, usdAmount(amount)], { account: w.account });
 }
-const waitUntil = async (t: number) => { while ((await now()) < t) { await sleep(1000); await owner.sendTransaction({ to: owner.account.address, value: 0n }); } };
+// Locally, blocks only come with transactions, so nudge the node; testnet blocks keep coming.
+const waitUntil = async (t: number) => {
+  while ((await now()) < t) {
+    await sleep(LOCAL ? 1000 : 3000);
+    if (LOCAL) await owner.sendTransaction({ to: owner.account.address, value: 0n });
+  }
+};
 await waitUntil(Number((await kleos.read.getMarket([resolved])).closeTime));
 await kleos.write.propose([resolved, true, keccak256(new TextEncoder().encode("https://testnet.monadexplorer.com")), "https://testnet.monadexplorer.com"], { account: jurors[0].account });
 console.log(`Market ${resolved} proposed YES; waiting out the dispute window…`);

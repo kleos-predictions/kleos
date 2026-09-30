@@ -2,7 +2,7 @@
 // history (see issue #1); until then they keep live profiles honest instead of showing samples.
 
 import { connection } from "next/server";
-import { encodeAbiParameters, keccak256, type Address } from "viem";
+import type { Address } from "viem";
 import { kleosAbi } from "./abi";
 import { KLEOS_ADDRESS, SOCIAL_ADDRESS, publicClient } from "./chain";
 import { kleosSocialAbi } from "./abi";
@@ -123,8 +123,7 @@ async function readCallLogs(marketId: number | undefined, limit: number, user?: 
       }
       const block = await publicClient.getBlock({ blockNumber: log.blockNumber });
       const call: Call = {
-        // Same id the social contract uses for votes: keccak256(abi.encode(txHash, logIndex)).
-        id: keccak256(encodeAbiParameters([{ type: "bytes32" }, { type: "uint256" }], [log.transactionHash, BigInt(log.logIndex)])),
+        id: Number(a.callId!), // numbered by the contract; votes use the same id
         address: user,
         r: reps.get(user)!,
         side: a.side!,

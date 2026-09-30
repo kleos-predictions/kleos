@@ -130,7 +130,7 @@ Proposals carry their proof, so anyone can check a resolution the same way they 
 
 ## 3d. Social layer (implemented)
 
-- **Calls:** `betWithCall` attaches a public, permanent one-liner (≤ 140 bytes) to a bet via the `CallPosted` event. Written before the outcome, scored after it: opinions with receipts.
+- **Calls:** `betWithCall` attaches a public, permanent one-liner (≤ 140 bytes) to a bet via the `CallPosted` event, which carries a `callId` numbered by the contract. Votes, the app and the indexer all use that one id. Written before the outcome, scored after it: opinions with receipts.
 - **Feed (`/feed`):** every call with its bet and market, filterable by All, Sharps (R ≥ 16) and Following. Resolved markets turn calls into "Called it" / "Missed" receipts.
 - **Follow:** `KleosSocial.sol`, a separate contract (`follow`, `unfollow`, `following`, `followerCount`) so social features never touch money or reputation. On-chain, so the graph follows the passkey to any device. Prompt-free inside a session.
 - **Bet buddies:** traders who won the same markets together, derived in the indexer (issue #2).

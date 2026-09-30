@@ -3,7 +3,6 @@
 
 import { multiplier, reputationDelta } from "./math";
 import { tierOf } from "./tiers";
-import { keccak256, toHex } from "viem";
 
 export type Category = "Crypto" | "Sports" | "Tech" | "Culture";
 export type Status = "live" | "closing" | "dispute" | "resolved";
@@ -297,7 +296,7 @@ export function pools(m: Market) {
 /** Reputation used for the connected wallet in demo mode (R = 16 → 3× boost). */
 export const DEMO_R = 16;
 
-export type Call = { id: `0x${string}`; address: string; name?: string; r: number; side: boolean; amount: number; entryPrice: number; text: string; ago: string };
+export type Call = { id: number; address: string; name?: string; r: number; side: boolean; amount: number; entryPrice: number; text: string; ago: string };
 
 const SAMPLE_CALLS: Record<number, string[]> = {
   1: ["ETF inflows haven't slowed in six weeks", "Halving supply shock is priced in already", "Funding rates say leverage is too crowded"],
@@ -314,7 +313,7 @@ export function sampleCalls(marketId: number): Call[] {
   return (SAMPLE_CALLS[marketId] ?? []).map((text, i) => {
     const trader = TRADERS[Math.floor(r() * TRADERS.length)];
     return {
-      id: keccak256(toHex(`sample-${marketId}-${i}`)),
+      id: marketId * 100 + i + 1, // sample ids; live ids come from the contract
       address: trader.address,
       name: trader.name,
       r: trader.r,

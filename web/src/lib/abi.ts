@@ -273,6 +273,12 @@ export const kleosAbi = [
       {
         "indexed": true,
         "internalType": "uint256",
+        "name": "callId",
+        "type": "uint256"
+      },
+      {
+        "indexed": true,
+        "internalType": "uint256",
         "name": "marketId",
         "type": "uint256"
       },
@@ -1478,6 +1484,19 @@ export const kleosAbi = [
       }
     ],
     "name": "bonusWeight",
+    "outputs": [
+      {
+        "internalType": "uint256",
+        "name": "",
+        "type": "uint256"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "callCount",
     "outputs": [
       {
         "internalType": "uint256",
@@ -2923,9 +2942,9 @@ export const kleosSocialAbi = [
     "inputs": [
       {
         "indexed": true,
-        "internalType": "bytes32",
+        "internalType": "uint256",
         "name": "callId",
-        "type": "bytes32"
+        "type": "uint256"
       },
       {
         "indexed": true,
@@ -3003,9 +3022,9 @@ export const kleosSocialAbi = [
   {
     "inputs": [
       {
-        "internalType": "bytes32",
+        "internalType": "uint256",
         "name": "",
-        "type": "bytes32"
+        "type": "uint256"
       }
     ],
     "name": "downs",
@@ -3167,9 +3186,9 @@ export const kleosSocialAbi = [
   {
     "inputs": [
       {
-        "internalType": "bytes32[]",
+        "internalType": "uint256[]",
         "name": "callIds",
-        "type": "bytes32[]"
+        "type": "uint256[]"
       },
       {
         "internalType": "address",
@@ -3214,9 +3233,9 @@ export const kleosSocialAbi = [
   {
     "inputs": [
       {
-        "internalType": "bytes32",
+        "internalType": "uint256",
         "name": "",
-        "type": "bytes32"
+        "type": "uint256"
       }
     ],
     "name": "ups",
@@ -3233,9 +3252,9 @@ export const kleosSocialAbi = [
   {
     "inputs": [
       {
-        "internalType": "bytes32",
+        "internalType": "uint256",
         "name": "callId",
-        "type": "bytes32"
+        "type": "uint256"
       },
       {
         "internalType": "int8",
@@ -3251,9 +3270,9 @@ export const kleosSocialAbi = [
   {
     "inputs": [
       {
-        "internalType": "bytes32",
+        "internalType": "uint256",
         "name": "",
-        "type": "bytes32"
+        "type": "uint256"
       },
       {
         "internalType": "address",

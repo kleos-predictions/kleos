@@ -4,3 +4,7 @@ cache
 types
 ignition/deployments/chain-31337
 coverage
+.env
+.env.*
+!.env.example
+scripts/.*.ts

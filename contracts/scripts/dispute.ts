@@ -3,12 +3,13 @@
 import { network } from "hardhat";
 import { readFileSync } from "node:fs";
 import type { Address } from "viem";
+import { getDemoWallets } from "./demo-wallets.ts";
 
 const { viem } = await network.getOrCreate();
 const publicClient = await viem.getPublicClient();
 const deployed = JSON.parse(readFileSync(`ignition/deployments/chain-${await publicClient.getChainId()}/deployed_addresses.json`, "utf8"));
 const kleos = await viem.getContractAt("Kleos", deployed["KleosModule#Kleos"] as Address);
-const [, ...wallets] = await viem.getWalletClients();
+const wallets = await getDemoWallets(viem, await publicClient.getChainId());
 const disputer = wallets[4]; // @pollster: disputing needs only the $15 bond
 
 const id = BigInt(process.env.KLEOS_MARKET ?? (await kleos.read.marketCount()));

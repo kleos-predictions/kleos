@@ -336,6 +336,11 @@ describe("calls", () => {
     const receipt = await (await viem.getPublicClient()).waitForTransactionReceipt({ hash });
     const events = await kleos.getEvents.CallPosted({}, { blockHash: receipt.blockHash });
     assert.equal(events[0].args.text, "ETF flows are accelerating");
+    assert.equal(events[0].args.callId, 1n, "calls are numbered by the contract");
+    await kleos.write.betWithCall([1n, false, usd(5), "second"], { account: u.account });
+    assert.equal(await kleos.read.callCount(), 2n);
+    await kleos.write.betWithCall([1n, false, usd(5), ""], { account: u.account }); // empty call: a plain bet, no number
+    assert.equal(await kleos.read.callCount(), 2n);
     assert.equal((await kleos.read.positions([1n, u.account.address, true]))[0], usd(20), "the bet itself went through");
     await assert.rejects(kleos.write.betWithCall([1n, true, usd(1), "x".repeat(141)], { account: u.account }), /CallTooLong/);
   });
@@ -519,7 +524,7 @@ describe("KleosSocial votes", () => {
   it("one vote per address per call; switching and clearing adjust the tallies", async () => {
     const [a, b] = await viem.getWalletClients();
     const social = await viem.deployContract("KleosSocial");
-    const id = keccak256(toHex("call-1"));
+    const id = 1n;
     await social.write.vote([id, 1], { account: a.account });
     await social.write.vote([id, 1], { account: a.account }); // no double count
     await social.write.vote([id, -1], { account: b.account });
