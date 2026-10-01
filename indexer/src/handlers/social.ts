@@ -44,11 +44,15 @@ indexer.onEvent({ contract: "KleosSocial", event: "CallVoted" }, async ({ event,
   if (value === 0) context.CallVote.deleteUnsafe(id);
   else context.CallVote.set({ id, call_id: callId.toString(), voter_id: trader.id, value });
 
+  const move = (t: { ups: number; downs: number }) => ({
+    ups: t.ups - (before > 0 ? 1 : 0) + (value > 0 ? 1 : 0),
+    downs: t.downs - (before < 0 ? 1 : 0) + (value < 0 ? 1 : 0),
+  });
   if (call) {
-    context.Call.set({
-      ...call,
-      ups: call.ups - (before > 0 ? 1 : 0) + (value > 0 ? 1 : 0),
-      downs: call.downs - (before < 0 ? 1 : 0) + (value < 0 ? 1 : 0),
-    });
+    context.Call.set({ ...call, ...move(call) });
+  } else {
+    // The call isn't posted yet: keep a running tally by id, so CallPosted needn't query votes.
+    const tally = (await context.PendingCallTally.get(callId.toString())) ?? { id: callId.toString(), ups: 0, downs: 0 };
+    context.PendingCallTally.set({ ...tally, ...move(tally) });
   }
 });

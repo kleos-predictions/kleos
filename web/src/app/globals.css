@@ -106,7 +106,8 @@ a:hover {
     border-color: var(--color-line);
     background: transparent;
   }
-  .btn-chip[aria-pressed="true"] {
+  .btn-chip[aria-pressed="true"],
+  .btn-chip[aria-selected="true"] {
     background: var(--color-ink);
     border-color: var(--color-ink);
     color: var(--color-ground);

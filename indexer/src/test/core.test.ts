@@ -451,4 +451,22 @@ describe("social", () => {
     // addr(9) never traded, but has a Trader row so CallVote.voter resolves.
     t.expect(await indexer.Trader.get(addr(9).toLowerCase())).toBeDefined();
   });
+
+  it("call votes: a pre-call vote changed, then cleared, before the call leaves no tally", async (t) => {
+    const hash = tx("w");
+    const indexer = createTestIndexer();
+    await run(indexer, [
+      categoryAdded(), marketCreated(),
+      social("CallVoted", 3, { callId: 1n, voter: bob, vote: 1n }),
+      social("CallVoted", 3, { callId: 1n, voter: carol, vote: -1n }, 1),
+      social("CallVoted", 4, { callId: 1n, voter: bob, vote: -1n }), // up → down
+      social("CallVoted", 5, { callId: 1n, voter: bob, vote: 0n }), // cleared
+      betPlaced({ user: alice, side: true, amount: usd(10), n: 6, hash }),
+      callPosted({ callId: 1n, user: alice, side: true, text: "Up", n: 6, logIndex: 1, hash }),
+    ]);
+    t.expect(await indexer.Call.getOrThrow("1")).toMatchObject({ ups: 0, downs: 1 });
+    t.expect((await indexer.CallVote.getAll()).map((v) => [v.voter_id, v.value])).toEqual([[carol.toLowerCase(), -1]]);
+    // The pending tally is consumed once the call is posted.
+    t.expect(await indexer.PendingCallTally.get("1")).toBeUndefined();
+  });
 });

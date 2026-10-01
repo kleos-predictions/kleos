@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { keccak256, toHex, zeroAddress, type Address, type Hex, type WalletClient } from "viem";
+import { encodeAbiParameters, keccak256, toHex, zeroAddress, type Address, type Hex, type WalletClient } from "viem";
 import { KLEOS_ADDRESS, SOCIAL_ADDRESS, USD_ADDRESS, chain, publicClient, shortAddress } from "@/lib/chain";
 import { kleosAbi, kleosSocialAbi, kleosUsdAbi } from "@/lib/abi";
 import { describeAccountError } from "@/lib/mera";
@@ -21,15 +21,69 @@ const DISPUTE_BOND = 15_000_000n;
 
 type Snapshot = Awaited<ReturnType<typeof readSnapshot>>;
 
-async function readSnapshot(id: bigint, me: Address | undefined) {
+/** Values that never change after deployment, read once per page load. */
+let constants: Promise<{ disputeWindow: bigint; courtPeriod: bigint; owner: Address }> | undefined;
+function readConstants() {
   const k = { address: KLEOS_ADDRESS!, abi: kleosAbi } as const;
-  const [market, court, disputeWindow, courtPeriod, payout, owner] = await Promise.all([
-    publicClient.readContract({ ...k, functionName: "getMarket", args: [id] }),
-    publicClient.readContract({ ...k, functionName: "getCourt", args: [id] }),
+  constants ??= Promise.all([
     publicClient.readContract({ ...k, functionName: "DISPUTE_WINDOW" }),
     publicClient.readContract({ ...k, functionName: "COURT_PERIOD" }),
-    publicClient.readContract({ ...k, functionName: "payouts", args: [id] }),
     publicClient.readContract({ ...k, functionName: "owner" }),
+  ])
+    .then(([disputeWindow, courtPeriod, owner]) => ({ disputeWindow, courtPeriod, owner }))
+    .catch((err) => {
+      constants = undefined; // retry on the next poll
+      throw err;
+    });
+  return constants;
+}
+
+/**
+ * Same as Kleos.voteCommitment: keccak256(abi.encode(id, round, juror, vote, salt)). Computed
+ * here, never with an eth_call, so the hidden vote and its salt never leave the device before
+ * the reveal.
+ */
+function voteCommitment(id: bigint, round: number, juror: Address, vote: number, salt: Hex): Hex {
+  return keccak256(
+    encodeAbiParameters(
+      [{ type: "uint256" }, { type: "uint8" }, { type: "address" }, { type: "uint8" }, { type: "bytes32" }],
+      [id, round, juror, vote, salt],
+    ),
+  );
+}
+
+/** Evidence links are shown only when they're plain https URLs. Anything else is shown as text. */
+const MAX_EVIDENCE = 300;
+function safeEvidenceUrl(uri: string): string | null {
+  if (uri.length > MAX_EVIDENCE) return null;
+  try {
+    return new URL(uri).protocol === "https:" ? uri : null;
+  } catch {
+    return null;
+  }
+}
+
+function Evidence({ uri }: { uri: string }) {
+  const href = safeEvidenceUrl(uri);
+  const text = uri.length > 80 ? `${uri.slice(0, 80)}…` : uri;
+  return href ? (
+    <a href={href} target="_blank" rel="noreferrer noopener" className="truncate text-sm underline">
+      Evidence: {text} ↗
+    </a>
+  ) : (
+    <p className="truncate text-sm text-muted" title="Not an https link, so it isn't clickable">
+      Evidence (not a link): {text}
+    </p>
+  );
+}
+
+async function readSnapshot(id: bigint, me: Address | undefined) {
+  const k = { address: KLEOS_ADDRESS!, abi: kleosAbi } as const;
+  const [market, court, payout, { disputeWindow, courtPeriod, owner }] = await Promise.all([
+    publicClient.readContract({ ...k, functionName: "getMarket", args: [id] }),
+    publicClient.readContract({ ...k, functionName: "getCourt", args: [id] }),
+    publicClient.readContract({ ...k, functionName: "payouts", args: [id] }),
+    readConstants(),
   ]);
   const jury = court.round > 0 ? await publicClient.readContract({ ...k, functionName: "getJury", args: [id, court.round] }) : [];
   const [names, juryVotes, juryCommits] = await Promise.all([
@@ -101,15 +155,25 @@ export function ResolutionPanel({ marketId, oracle }: { marketId: number; oracle
     }
   }, [id, account.address]);
 
-  // Poll the chain: phases change on their own as windows open and close.
+  // Poll the chain: phases change on their own as windows open and close. Paused while the tab is
+  // hidden, and stopped once the market is final (resolved, bonus open, nothing left to claim here).
+  const final = Boolean(snap && snap.market.state === STATE.Resolved && snap.bonusOpen && (snap.me.bonus === 0n || snap.me.bonusClaimed));
   useEffect(() => {
     const first = setTimeout(refresh, 0);
-    const t = setInterval(refresh, 2500);
+    if (final) return () => clearTimeout(first);
+    const t = setInterval(() => {
+      if (!document.hidden) void refresh();
+    }, 2500);
+    const onVisible = () => {
+      if (!document.hidden) void refresh();
+    };
+    document.addEventListener("visibilitychange", onVisible);
     return () => {
       clearTimeout(first);
       clearInterval(t);
+      document.removeEventListener("visibilitychange", onVisible);
     };
-  }, [refresh]);
+  }, [refresh, final]);
 
   /** Runs one on-chain action. `fresh` asks for the passkey again (bonds and jury votes). */
   async function act(label: string, fresh: boolean, run: (client: WalletClient) => Promise<Hex | void>, bond?: bigint) {
@@ -190,7 +254,9 @@ export function ResolutionPanel({ marketId, oracle }: { marketId: number; oracle
               <input
                 value={evidence}
                 onChange={(e) => setEvidence(e.target.value)}
-                placeholder="Link to the evidence (official result, feed, article)"
+                placeholder="https:// link to the evidence (official result, feed, article)"
+                aria-label="Evidence link"
+                maxLength={MAX_EVIDENCE}
                 className="rounded-[10px] border border-line bg-ground px-3 py-2.5 text-sm text-ink outline-none placeholder:text-muted focus:border-line-strong"
               />
               <div className="grid grid-cols-2 gap-2">
@@ -201,7 +267,7 @@ export function ResolutionPanel({ marketId, oracle }: { marketId: number; oracle
                       () =>
                         act(`Propose ${outcomeText(yes)}`, true, (c) => write(c, "propose", [id, yes, keccak256(toHex(evidence.trim())), evidence.trim()]), BOND),
                       yes ? "btn-yes" : "btn-no-active",
-                      !evidence.trim(),
+                      !safeEvidenceUrl(evidence.trim()),
                     )}
                   </span>
                 ))}
@@ -230,11 +296,7 @@ export function ResolutionPanel({ marketId, oracle }: { marketId: number; oracle
             </span>
             <span className="lbl">{now < windowEnds ? `Final in ${clockText(windowEnds - now)}` : "Dispute window over"}</span>
           </div>
-          {m.evidenceURI && (
-            <a href={m.evidenceURI} target="_blank" rel="noreferrer" className="truncate text-sm underline">
-              Evidence: {m.evidenceURI} ↗
-            </a>
-          )}
+          {m.evidenceURI && <Evidence uri={m.evidenceURI} />}
           {now < windowEnds
             ? !isProposer && btn("Dispute · $15 bond", () => act("Dispute · $15 bond", true, (c) => write(c, "dispute", [id]), DISPUTE_BOND), "btn-no")
             : btn("Finalize", () => act("Finalize", false, (c) => write(c, "finalize", [id])))}
@@ -284,9 +346,7 @@ export function ResolutionPanel({ marketId, oracle }: { marketId: number; oracle
                     {btn(v.label, () =>
                       act(v.label, true, async (c) => {
                         const salt = await deriveSalt(c, id, court.round);
-                        const commitment = await publicClient.readContract({
-                          address: KLEOS_ADDRESS!, abi: kleosAbi, functionName: "voteCommitment", args: [id, court.round, c.account!.address, v.value, salt],
-                        });
+                        const commitment = voteCommitment(id, court.round, c.account!.address, v.value, salt);
                         const hash = await write(c, "commitVote", [id, commitment]);
                         setNotice(`Hidden vote sent. You'll reveal it after ${clockText(Number(court.commitEnd) - now)}; nothing was saved on this device.`);
                         return hash;
@@ -307,8 +367,7 @@ export function ResolutionPanel({ marketId, oracle }: { marketId: number; oracle
                 const salt = await deriveSalt(c, id, court.round);
                 const committed = await publicClient.readContract({ address: KLEOS_ADDRESS!, abi: kleosAbi, functionName: "commitments", args: [id, court.round, c.account!.address] });
                 for (const v of VOTES) {
-                  const guess = await publicClient.readContract({ address: KLEOS_ADDRESS!, abi: kleosAbi, functionName: "voteCommitment", args: [id, court.round, c.account!.address, v.value, salt] });
-                  if (guess === committed) return write(c, "revealVote", [id, v.value, salt]);
+                  if (voteCommitment(id, court.round, c.account!.address, v.value, salt) === committed) return write(c, "revealVote", [id, v.value, salt]);
                 }
                 throw new Error("This passkey didn't cast the hidden vote for this round.");
               }),
@@ -325,11 +384,7 @@ export function ResolutionPanel({ marketId, oracle }: { marketId: number; oracle
           <span className="font-dot text-[28px] leading-none font-black">
             {m.voided ? "AMBIGUOUS · REFUNDED" : <>RESOLVED <span className={m.outcome ? "text-accent" : "text-lavender"}>{outcomeText(m.outcome)}</span></>}
           </span>
-          {m.evidenceURI && (
-            <a href={m.evidenceURI} target="_blank" rel="noreferrer" className="truncate text-sm underline">
-              Evidence: {m.evidenceURI} ↗
-            </a>
-          )}
+          {m.evidenceURI && <Evidence uri={m.evidenceURI} />}
           <div className="flex flex-wrap gap-2">
             {!snap.bonusOpen &&
               btn("Settle everyone", () =>
@@ -351,7 +406,7 @@ export function ResolutionPanel({ marketId, oracle }: { marketId: number; oracle
         </div>
       )}
 
-      {notice && <p className="rounded-[12px] border border-line-strong px-4 py-3 text-sm">{notice}</p>}
+      {notice && <p role="status" aria-live="polite" className="rounded-[12px] border border-line-strong px-4 py-3 text-sm">{notice}</p>}
       {error && (
         <p role="alert" className="rounded-[12px] border border-accent px-4 py-3 text-sm">
           {error}
