@@ -2,6 +2,9 @@
 
 **Prediction Market with a Verifiable Reputation Layer.** Built on Monad testnet.
 
+<img width="3000" height="1000" alt="image" src="https://github.com/user-attachments/assets/3f0683aa-7e7a-4590-9c67-e028b576fd30" />
+
+
 Every bet weighs money × reputation. Reputation only grows when you are right against the crowd, it shrinks faster than it grows, and every change is an on-chain event anyone can audit. Each market shows two prices: what the money says and what proven forecasters say.
 
 ## Why Kleos
