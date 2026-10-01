@@ -27,8 +27,8 @@ flowchart LR
   end
 
   subgraph web["web/"]
-    client["src/lib/indexer.ts (#3)"]
-    onchain["src/lib/onchain.ts<br/>RPC reads (today)"]
+    client["src/lib/indexer.ts<br/>one GraphQL query per page"]
+    onchain["src/lib/onchain.ts<br/>contract reads"]
     sample["src/lib/data.ts<br/>sample data (demo mode)"]
     pages["Pages<br/>markets · market · feed · profile · leaderboard"]
   end
@@ -41,8 +41,8 @@ flowchart LR
   testnet --> handlers
   handlers --> store
   planned -.-> store
-  store -.-> cloud -.-> client
-  client -.->|"1st choice"| pages
+  store --> cloud --> client
+  client -->|"1st choice"| pages
   onchain -->|"fallback"| pages
   sample -->|"no chain configured"| pages
 ```
@@ -381,7 +381,7 @@ flowchart LR
   p2["2 · Lifecycle on the local chain<br/>seed + court scripts"]:::done
   p3["3 · Social, sharp signal,<br/>court, protocol totals"]:::done
   p4["4 · Bet buddies (#2)"]:::todo
-  p5["5 · web/src/lib/indexer.ts (#3)<br/>+ one wiring PR"]:::todo
+  p5["5 · web/src/lib/indexer.ts (#3)<br/>+ one wiring PR"]:::done
   p6["6 · Testnet + Envio Cloud<br/>testnet checked, first Cloud deploy live"]:::next
   p0 --> p1 --> p2 --> p3 --> p4 --> p5 --> p6
   classDef done fill:#1f6f3f,stroke:#1f6f3f,color:#fff
