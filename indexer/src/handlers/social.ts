@@ -34,11 +34,15 @@ indexer.onEvent({ contract: "KleosSocial", event: "CallVoted" }, async ({ event,
   const { callId, voter, vote } = event.params;
   const id = `${callId}_${addressId(voter)}`;
   const value = Number(vote);
-  const [previous, call] = await Promise.all([context.CallVote.get(id), context.Call.get(callId.toString())]);
+  const [previous, call, trader] = await Promise.all([
+    context.CallVote.get(id),
+    context.Call.get(callId.toString()),
+    getTrader(context, voter), // voters need not have traded, but CallVote.voter must resolve
+  ]);
   const before = previous?.value ?? 0;
 
   if (value === 0) context.CallVote.deleteUnsafe(id);
-  else context.CallVote.set({ id, call_id: callId.toString(), voter_id: addressId(voter), value });
+  else context.CallVote.set({ id, call_id: callId.toString(), voter_id: trader.id, value });
 
   if (call) {
     context.Call.set({

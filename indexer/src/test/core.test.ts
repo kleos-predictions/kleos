@@ -448,5 +448,7 @@ describe("social", () => {
     t.expect((await indexer.CallVote.getAll()).map((v) => [v.voter_id, v.value]).sort()).toEqual(
       [[carol.toLowerCase(), 1], [addr(9).toLowerCase(), -1]].sort(),
     );
+    // addr(9) never traded, but has a Trader row so CallVote.voter resolves.
+    t.expect(await indexer.Trader.get(addr(9).toLowerCase())).toBeDefined();
   });
 });
