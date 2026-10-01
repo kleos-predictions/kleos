@@ -2,15 +2,16 @@
 name: kleos-indexer
 disable_default_cross_chain: true
 # Monad testnet, served by HyperSync (no rpc: entry). Envio Cloud runs this file.
-# Set ENVIO_KLEOS_ADDRESS, ENVIO_KLEOS_START_BLOCK and ENVIO_API_TOKEN in the environment
-# Use the deployed contract address and first relevant event block. Keep the token in environment variables.
+# Kleos as deployed on 2026-09-30 (contracts/ignition/deployments/chain-10143). A redeploy of
+# the contracts needs both values changed. ENVIO_API_TOKEN comes from the environment
+# (Envio Cloud: the indexer's Environment Variables tab).
 chains:
 - id: 10143
-  start_block: ${ENVIO_KLEOS_START_BLOCK}
+  start_block: 67114811
   contracts:
   - name: Kleos
     address:
-    - "${ENVIO_KLEOS_ADDRESS}" # quoted: an unquoted hex address can parse as a number
+    - "0xd68a1F212fa52663468BBB6F0456Cd6e7Ce854Cb" # quoted: an unquoted hex address can parse as a number
     events:
     - event: BetPlaced(uint256 indexed marketId, address indexed user, bool side, uint256 amount, uint256 effective, uint256 multiplier, uint256 entryPrice, uint256 priceRepYes, uint256 priceMoneyYes)
     - event: BonusClaimed(uint256 indexed marketId, address indexed user, uint256 amount)
