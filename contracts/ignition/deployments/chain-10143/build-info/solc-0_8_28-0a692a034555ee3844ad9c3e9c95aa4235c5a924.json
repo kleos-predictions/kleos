@@ -1,0 +1,49 @@
+{
+  "_format": "hh3-sol-build-info-1",
+  "id": "solc-0_8_28-0a692a034555ee3844ad9c3e9c95aa4235c5a924",
+  "solcVersion": "0.8.28",
+  "solcLongVersion": "0.8.28+commit.7893614a",
+  "compilerType": "solc",
+  "toolVersions": {
+    "hardhat": "3.18.0"
+  },
+  "userSourceNameMap": {
+    "src/KleosUSD.sol": "project/src/KleosUSD.sol"
+  },
+  "input": {
+    "language": "Solidity",
+    "settings": {
+      "evmVersion": "cancun",
+      "optimizer": {
+        "enabled": true,
+        "runs": 200
+      },
+      "outputSelection": {
+        "*": {
+          "": [
+            "ast"
+          ],
+          "*": [
+            "abi",
+            "evm.bytecode.linkReferences",
+            "evm.bytecode.object",
+            "evm.bytecode.opcodes",
+            "evm.bytecode.sourceMap",
+            "evm.deployedBytecode.immutableReferences",
+            "evm.deployedBytecode.linkReferences",
+            "evm.deployedBytecode.object",
+            "evm.deployedBytecode.opcodes",
+            "evm.deployedBytecode.sourceMap",
+            "evm.methodIdentifiers"
+          ]
+        }
+      },
+      "remappings": []
+    },
+    "sources": {
+      "project/src/KleosUSD.sol": {
+        "content": "// SPDX-License-Identifier: MIT\npragma solidity ^0.8.24;\n\n/// @title KleosUSD\n/// @notice Test stablecoin for the Kleos testnet demo. Anyone can mint from the faucet\n///         once per cooldown, and the sponsor can top up new passkey accounts so the first\n///         bet needs no extra step. 6 decimals, like USDC.\ncontract KleosUSD {\n    string public constant name = \"Kleos Test USD\";\n    string public constant symbol = \"kUSD\";\n    uint8 public constant decimals = 6;\n\n    uint256 public constant FAUCET_AMOUNT = 1_000e6;\n    uint256 public constant FAUCET_COOLDOWN = 1 hours;\n\n    uint256 public constant SPONSOR_MINT_MAX = 1_000e6;\n\n    address public owner;\n    address public sponsor;\n    /// @notice The Kleos market. It can move kUSD without a separate approval, so a new account's\n    ///         first bet is one transaction. Fine for a test token; a real stablecoin needs approvals.\n    address public market;\n    uint256 public totalSupply;\n    mapping(address => uint256) public balanceOf;\n    mapping(address => mapping(address => uint256)) public allowance;\n    mapping(address => uint256) public lastFaucet;\n\n    event Transfer(address indexed from, address indexed to, uint256 value);\n    event Approval(address indexed owner, address indexed spender, uint256 value);\n    event SponsorSet(address indexed sponsor);\n    event MarketSet(address indexed market);\n\n    error FaucetCooldown(uint256 availableAt);\n    error NotOwner();\n    error ZeroAddress();\n    error NotSponsor();\n    error MintTooLarge();\n    error InsufficientBalance();\n    error InsufficientAllowance();\n\n    constructor() {\n        owner = msg.sender;\n        sponsor = msg.sender;\n    }\n\n    function setSponsor(address next) external {\n        if (msg.sender != owner) revert NotOwner();\n        if (next == address(0)) revert ZeroAddress();\n        sponsor = next;\n        emit SponsorSet(next);\n    }\n\n    /// @dev Test token only: the market can move any holder's kUSD without an allowance. Kleos only\n    ///      ever pulls from msg.sender, so that shortcut can't be pointed at someone else's balance.\n    function setMarket(address next) external {\n        if (msg.sender != owner) revert NotOwner();\n        if (next == address(0)) revert ZeroAddress();\n        market = next;\n        emit MarketSet(next);\n    }\n\n    /// @notice Test money for a new account, sent by the app's sponsor wallet.\n    function sponsorMint(address to, uint256 value) external {\n        if (msg.sender != sponsor) revert NotSponsor();\n        if (value > SPONSOR_MINT_MAX) revert MintTooLarge();\n        _mint(to, value);\n    }\n\n    function faucet() external {\n        uint256 availableAt = lastFaucet[msg.sender] + FAUCET_COOLDOWN;\n        if (lastFaucet[msg.sender] != 0 && block.timestamp < availableAt) revert FaucetCooldown(availableAt);\n        lastFaucet[msg.sender] = block.timestamp;\n        _mint(msg.sender, FAUCET_AMOUNT);\n    }\n\n    function approve(address spender, uint256 value) external returns (bool) {\n        allowance[msg.sender][spender] = value;\n        emit Approval(msg.sender, spender, value);\n        return true;\n    }\n\n    function transfer(address to, uint256 value) external returns (bool) {\n        _transfer(msg.sender, to, value);\n        return true;\n    }\n\n    function transferFrom(address from, address to, uint256 value) external returns (bool) {\n        uint256 allowed = allowance[from][msg.sender];\n        if (msg.sender != market && allowed != type(uint256).max) {\n            if (allowed < value) revert InsufficientAllowance();\n            allowance[from][msg.sender] = allowed - value;\n        }\n        _transfer(from, to, value);\n        return true;\n    }\n\n    function _transfer(address from, address to, uint256 value) internal {\n        if (balanceOf[from] < value) revert InsufficientBalance();\n        unchecked {\n            balanceOf[from] -= value;\n        }\n        balanceOf[to] += value;\n        emit Transfer(from, to, value);\n    }\n\n    function _mint(address to, uint256 value) internal {\n        totalSupply += value;\n        balanceOf[to] += value;\n        emit Transfer(address(0), to, value);\n    }\n}\n"
+      }
+    }
+  }
+}

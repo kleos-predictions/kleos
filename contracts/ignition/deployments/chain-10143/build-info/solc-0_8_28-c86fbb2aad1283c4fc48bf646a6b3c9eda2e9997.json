@@ -1,0 +1,49 @@
+{
+  "_format": "hh3-sol-build-info-1",
+  "id": "solc-0_8_28-c86fbb2aad1283c4fc48bf646a6b3c9eda2e9997",
+  "solcVersion": "0.8.28",
+  "solcLongVersion": "0.8.28+commit.7893614a",
+  "compilerType": "solc",
+  "toolVersions": {
+    "hardhat": "3.18.0"
+  },
+  "userSourceNameMap": {
+    "src/KleosSocial.sol": "project/src/KleosSocial.sol"
+  },
+  "input": {
+    "language": "Solidity",
+    "settings": {
+      "evmVersion": "cancun",
+      "optimizer": {
+        "enabled": true,
+        "runs": 200
+      },
+      "outputSelection": {
+        "*": {
+          "": [
+            "ast"
+          ],
+          "*": [
+            "abi",
+            "evm.bytecode.linkReferences",
+            "evm.bytecode.object",
+            "evm.bytecode.opcodes",
+            "evm.bytecode.sourceMap",
+            "evm.deployedBytecode.immutableReferences",
+            "evm.deployedBytecode.linkReferences",
+            "evm.deployedBytecode.object",
+            "evm.deployedBytecode.opcodes",
+            "evm.deployedBytecode.sourceMap",
+            "evm.methodIdentifiers"
+          ]
+        }
+      },
+      "remappings": []
+    },
+    "sources": {
+      "project/src/KleosSocial.sol": {
+        "content": "// SPDX-License-Identifier: MIT\npragma solidity ^0.8.24;\n\n/// @title KleosSocial\n/// @notice Usernames, who follows whom, and ups/downs on calls. On-chain, so the graph follows the passkey to any device\n///         and anyone can read it. Kept apart from the market contract on purpose: social\n///         features can evolve without touching money or reputation.\ncontract KleosSocial {\n    mapping(address => address[]) internal _following;\n    mapping(address => mapping(address => uint256)) internal _slot; // index + 1; 0 = not following\n    mapping(address => uint256) public followerCount;\n\n    // Usernames: 3–20 chars of a–z, 0–9 and _, unique. Changing yours frees the old one.\n    mapping(address => string) public nameOf;\n    mapping(bytes32 => address) public ownerOfName;\n\n    // Call votes: engagement only, one vote per address per call. A call's id is the callId\n    // Kleos numbers it with in its CallPosted event.\n    mapping(uint256 => uint256) public ups;\n    mapping(uint256 => uint256) public downs;\n    mapping(uint256 => mapping(address => int8)) public voteOf;\n\n    event Followed(address indexed follower, address indexed followee);\n    event Unfollowed(address indexed follower, address indexed followee);\n    event CallVoted(uint256 indexed callId, address indexed voter, int8 vote);\n    event NameSet(address indexed user, string name);\n\n    error CannotFollowSelf();\n    error BadVote();\n    error BadName();\n    error NameTaken();\n\n    function setName(string calldata name) external {\n        bytes memory b = bytes(name);\n        if (b.length < 3 || b.length > 20) revert BadName();\n        for (uint256 i; i < b.length; ++i) {\n            bytes1 c = b[i];\n            if (!((c >= 0x61 && c <= 0x7a) || (c >= 0x30 && c <= 0x39) || c == 0x5f)) revert BadName(); // a-z 0-9 _\n        }\n        bytes32 key = keccak256(b);\n        address owner = ownerOfName[key];\n        if (owner == msg.sender) return;\n        if (owner != address(0)) revert NameTaken();\n        string memory old = nameOf[msg.sender];\n        if (bytes(old).length > 0) delete ownerOfName[keccak256(bytes(old))];\n        ownerOfName[key] = msg.sender;\n        nameOf[msg.sender] = name;\n        emit NameSet(msg.sender, name);\n    }\n\n    /// @notice Usernames for many addresses at once (\"\" when unset).\n    function namesOf(address[] calldata users) external view returns (string[] memory names) {\n        names = new string[](users.length);\n        for (uint256 i; i < users.length; ++i) names[i] = nameOf[users[i]];\n    }\n\n    /// @notice +1 up, -1 down, 0 clears your vote.\n    function vote(uint256 callId, int8 value) external {\n        if (value < -1 || value > 1) revert BadVote();\n        int8 previous = voteOf[callId][msg.sender];\n        if (previous == value) return;\n        if (previous == 1) ups[callId]--;\n        if (previous == -1) downs[callId]--;\n        if (value == 1) ups[callId]++;\n        if (value == -1) downs[callId]++;\n        voteOf[callId][msg.sender] = value;\n        emit CallVoted(callId, msg.sender, value);\n    }\n\n    /// @notice Tallies for many calls at once, plus `voter`'s own vote on each (0 if none).\n    function tallies(uint256[] calldata callIds, address voter)\n        external\n        view\n        returns (uint256[] memory up, uint256[] memory down, int8[] memory mine)\n    {\n        up = new uint256[](callIds.length);\n        down = new uint256[](callIds.length);\n        mine = new int8[](callIds.length);\n        for (uint256 i; i < callIds.length; ++i) {\n            up[i] = ups[callIds[i]];\n            down[i] = downs[callIds[i]];\n            mine[i] = voteOf[callIds[i]][voter];\n        }\n    }\n\n    function follow(address who) external {\n        if (who == msg.sender) revert CannotFollowSelf();\n        if (_slot[msg.sender][who] != 0) return;\n        _following[msg.sender].push(who);\n        _slot[msg.sender][who] = _following[msg.sender].length;\n        followerCount[who]++;\n        emit Followed(msg.sender, who);\n    }\n\n    function unfollow(address who) external {\n        uint256 slot = _slot[msg.sender][who];\n        if (slot == 0) return;\n        address[] storage list = _following[msg.sender];\n        address last = list[list.length - 1];\n        list[slot - 1] = last;\n        _slot[msg.sender][last] = slot;\n        list.pop();\n        delete _slot[msg.sender][who];\n        followerCount[who]--;\n        emit Unfollowed(msg.sender, who);\n    }\n\n    function isFollowing(address follower, address who) external view returns (bool) {\n        return _slot[follower][who] != 0;\n    }\n\n    function following(address follower) external view returns (address[] memory) {\n        return _following[follower];\n    }\n}\n"
+      }
+    }
+  }
+}
