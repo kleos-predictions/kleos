@@ -1,6 +1,6 @@
 // Market lifecycle: creation, sponsorship, proposal, dispute, resolution, bonus.
 import { indexer, type Call, type EvmOnEventContext } from "envio";
-import { WAD } from "../utils.js";
+import { WAD, getProtocol, roundId } from "../utils.js";
 
 indexer.onEvent({ contract: "Kleos", event: "CategoryAdded" }, async ({ event, context }) => {
   context.Category.set({ id: event.params.id.toString(), name: event.params.name });
@@ -10,6 +10,8 @@ indexer.onEvent(
   { contract: "Kleos", event: "MarketCreated", fields: { block: ["timestamp"] } },
   async ({ event, context }) => {
     const p = event.params;
+    const protocol = await getProtocol(context);
+    context.Protocol.set({ ...protocol, marketCount: protocol.marketCount + 1 });
     context.Market.set({
       id: p.marketId.toString(),
       question: p.question,
@@ -23,6 +25,7 @@ indexer.onEvent(
       state: "Open",
       outcome: undefined,
       voided: false,
+      expired: false,
       resolvedAt: undefined,
       proposedOutcome: undefined,
       proposer: undefined,
@@ -39,12 +42,17 @@ indexer.onEvent(
       betCount: 0,
       bettorCount: 0,
       callCount: 0,
+      sharpYes: 0,
+      sharpNo: 0,
+      courtRound: 0,
+      verdict: undefined,
       fee: 0n,
       bonusPool: 0n,
       bonusWeight: 0n,
       sponsored: 0n,
       lastSponsor: undefined,
       bonusOpen: false,
+      rolledOver: 0n,
     });
   },
 );
@@ -96,7 +104,7 @@ indexer.onEvent(
   },
 );
 
-// Court AMBIGUOUS or a failed court: everyone is refunded and no MarketResolved is emitted.
+// Court AMBIGUOUS, a failed court, or expiry: everyone is refunded and no MarketResolved is emitted.
 indexer.onEvent(
   { contract: "Kleos", event: "MarketVoided", fields: { block: ["timestamp"] } },
   async ({ event, context }) => {
@@ -104,8 +112,32 @@ indexer.onEvent(
     if (!m) return;
     context.Market.set({ ...m, state: "Resolved", voided: true, resolvedAt: event.block.timestamp });
     await scoreCalls(context, m.id, () => "Refunded");
+    // Voided while disputed with no verdict: the last round closed without one, and Kleos emits no
+    // other event for that.
+    if (m.state === "Disputed" && m.verdict === undefined && m.courtRound > 0) {
+      const round = await context.CourtRound.get(roundId(m.id, m.courtRound));
+      if (round) context.CourtRound.set({ ...round, failed: true });
+    }
   },
 );
+
+// Follows MarketVoided in the same transaction: nobody proposed an outcome in time.
+indexer.onEvent({ contract: "Kleos", event: "MarketExpired" }, async ({ event, context }) => {
+  const m = await knownMarket(context, event.params.marketId);
+  if (!m) return;
+  context.Market.set({ ...m, expired: true });
+});
+
+// The $2 creation fee accrues before its MarketCreated, so this never touches the market.
+indexer.onEvent({ contract: "Kleos", event: "RevenueAccrued" }, async ({ event, context }) => {
+  const protocol = await getProtocol(context);
+  context.Protocol.set({ ...protocol, revenueAccrued: protocol.revenueAccrued + event.params.amount });
+});
+
+indexer.onEvent({ contract: "Kleos", event: "RevenueWithdrawn" }, async ({ event, context }) => {
+  const protocol = await getProtocol(context);
+  context.Protocol.set({ ...protocol, revenueWithdrawn: protocol.revenueWithdrawn + event.params.amount });
+});
 
 // Only trader-created markets have a bond. It's forfeited when the court rules the question
 // AMBIGUOUS, and returned otherwise (including when the court fails).
@@ -115,8 +147,14 @@ indexer.onEvent({ contract: "Kleos", event: "CreatorBondReleased" }, async ({ ev
   context.Market.set({ ...m, creatorBondForfeited: event.params.forfeited });
 });
 
-// Carries the final pot. When nobody gained reputation, Kleos emits BonusRolledOver first and then
-// BonusOpened with a pool of 0, so this handler alone keeps bonusPool right.
+// When nobody gained reputation the pot funds future markets. BonusOpened follows with a pool of 0.
+indexer.onEvent({ contract: "Kleos", event: "BonusRolledOver" }, async ({ event, context }) => {
+  const m = await knownMarket(context, event.params.marketId);
+  if (!m) return;
+  context.Market.set({ ...m, rolledOver: event.params.amount });
+});
+
+// Carries the final pot, so this handler alone keeps bonusPool right.
 indexer.onEvent({ contract: "Kleos", event: "BonusOpened" }, async ({ event, context }) => {
   const m = await knownMarket(context, event.params.marketId);
   if (!m) return;
@@ -124,9 +162,9 @@ indexer.onEvent({ contract: "Kleos", event: "BonusOpened" }, async ({ event, con
 });
 
 /**
- * Kleos.propose and fundFromGlobal don't check that a market exists: an id that was never created
- * reads as Open with closeTime 0, so events can arrive for a market we never indexed. Skip them
- * rather than halt the indexer on that block.
+ * Every market event follows its MarketCreated: propose, expire, sponsor and fundFromGlobal reject
+ * ids that were never created, and the rest need a state only those reach. Kept as a guard anyway,
+ * so an unexpected event logs a warning instead of halting the indexer on that block.
  */
 async function knownMarket(context: EvmOnEventContext, marketId: bigint) {
   const m = await context.Market.get(marketId.toString());

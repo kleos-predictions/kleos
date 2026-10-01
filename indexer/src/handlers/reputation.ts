@@ -11,9 +11,8 @@ indexer.onEvent(
       p.marketId === 0n ? undefined : context.Position.get(positionId(p.marketId, p.user)),
     ]);
     // marketId 0 = demo seed or admin slash. Otherwise a bet if the trader holds a position here;
-    // jurors can never hold one, so the rest is jury duty. (entryPrice 0 alone isn't enough:
-    // a bet into an empty side also enters at 0.) Known gap: until Kleos.propose rejects id 0, a
-    // court on a phantom market 0 emits jury changes that land here as Admin.
+    // jurors can never hold one, so the rest is jury duty. (Jury changes also carry entryPrice 0,
+    // while bet entry prices are clamped to at least 5%, but the position is the direct test.)
     const kind = p.marketId === 0n ? "Admin" : position ? "Bet" : "Jury";
 
     context.ReputationChange.set({
@@ -58,4 +57,10 @@ indexer.onEvent({ contract: "Kleos", event: "Flagged" }, async ({ event, context
 indexer.onEvent({ contract: "Kleos", event: "FlagCleared" }, async ({ event, context }) => {
   const trader = await getTrader(context, event.params.user);
   context.Trader.set({ ...trader, flagged: false });
+});
+
+// Followed by a ReputationChanged with marketId 0, which sets R and pending.
+indexer.onEvent({ contract: "Kleos", event: "Slashed" }, async ({ event, context }) => {
+  const trader = await getTrader(context, event.params.user);
+  context.Trader.set({ ...trader, slashed: trader.slashed + event.params.amount });
 });

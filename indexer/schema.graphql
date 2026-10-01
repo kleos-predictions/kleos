@@ -40,7 +40,8 @@ type Market {
 
   state: MarketState!
   outcome: Boolean # set once resolved (not for voided markets)
-  voided: Boolean!
+  voided: Boolean! # refunded: the court ruled AMBIGUOUS, the court failed, or the market expired
+  expired: Boolean! # voided because nobody proposed an outcome in time (Kleos.expire)
   resolvedAt: Int
   proposedOutcome: Boolean
   proposer: String
@@ -58,6 +59,11 @@ type Market {
   betCount: Int!
   bettorCount: Int! # distinct addresses
   callCount: Int!
+  sharpYes: Int! # distinct traders who bet YES while their R was at least 16 (tier IV)
+  sharpNo: Int!
+
+  courtRound: Int! # 0 until disputed; then the current Kleos Court round (1 or 2)
+  verdict: Int # 1 YES, 2 NO, 3 AMBIGUOUS; unset if the court failed
 
   fee: BigInt! # 2% of the losing pool, set on resolution
   bonusPool: BigInt! # fee + sponsorships + global-pool top-ups; the final pot once bonusOpen
@@ -65,11 +71,13 @@ type Market {
   sponsored: BigInt! # third-party sponsorships only (not global-pool top-ups)
   lastSponsor: String
   bonusOpen: Boolean!
+  rolledOver: BigInt! # bonus sent to the global pool because no winner gained reputation
 
   bets: [Bet!]! @derivedFrom(field: "market")
   positions: [Position!]! @derivedFrom(field: "market")
   pricePoints: [PricePoint!]! @derivedFrom(field: "market")
   calls: [Call!]! @derivedFrom(field: "market")
+  courtRounds: [CourtRound!]! @derivedFrom(field: "market")
 }
 
 # One trader's stake in one market, both sides. Id: marketId_address.
@@ -85,6 +93,8 @@ type Position {
   payout: BigInt!
   bonusWeight: BigInt! # ΔR⁺·M from settlement; 0 unless the trader gained reputation here
   bonus: BigInt! # claimed so far
+  sharpYes: Boolean! # counted in Market.sharpYes
+  sharpNo: Boolean!
 }
 
 type Bet {
@@ -95,7 +105,9 @@ type Bet {
   amount: BigInt!
   effective: BigInt!
   multiplier: BigInt!
-  entryPrice: BigInt! # rep-weighted price of the chosen side before the bet
+  entryPrice: BigInt! # rep-weighted price of the chosen side before the bet, clamped to 5–95%
+  traderR: BigInt! # the trader's vested R when the bet was placed
+  sharp: Boolean! # traderR ≥ 16 (tier IV): counts toward the sharp signal
   timestamp: Int! @index
   txHash: String!
 }
@@ -113,8 +125,11 @@ type Trader {
   id: ID! # lowercase address
   r: BigInt! # vested reputation
   pending: BigInt! # gains waiting to vest
-  resolvedBets: Int! # settles in markets deep enough to count (seeds are not in any event)
+  resolvedBets: Int! # positions of at least $50 settled in deep markets. Seeds set it without an event, so seeded traders read low
   flagged: Boolean!
+  slashed: BigInt! # reputation removed by the admin after review
+  isJuror: Boolean! # in the Kleos Court pool
+  juryDuties: Int! # times drawn onto a jury
   wins: Int!
   losses: Int!
   betCount: Int!
@@ -125,6 +140,7 @@ type Trader {
   positions: [Position!]! @derivedFrom(field: "trader")
   reputationChanges: [ReputationChange!]! @derivedFrom(field: "trader")
   calls: [Call!]! @derivedFrom(field: "trader")
+  juryVotes: [JurorVote!]! @derivedFrom(field: "juror")
 }
 
 # Every ReputationChanged event, so anyone can rebuild R and check the math.
@@ -156,4 +172,45 @@ type Call {
   result: CallResult!
   timestamp: Int! @index
   txHash: String!
+}
+
+# One Kleos Court round on a disputed market. Id: marketId_round. A round with no verdict either
+# leads to a redraw (round 2) or, in the last round, voids the market.
+type CourtRound {
+  id: ID!
+  market: Market! @index
+  round: Int!
+  jurors: [String!]! # lowercase addresses, as drawn
+  drawnAt: Int!
+  commits: Int!
+  reveals: Int!
+  yes: Int!
+  no: Int!
+  ambiguous: Int!
+  verdict: Int # 1 YES, 2 NO, 3 AMBIGUOUS, once 3 votes match
+  failed: Boolean! # closed without a verdict
+  votes: [JurorVote!]! @derivedFrom(field: "round")
+}
+
+# One juror's seat in one round. Id: marketId_round_juror. Created when the jury is drawn, so
+# no-shows are visible.
+type JurorVote {
+  id: ID!
+  round: CourtRound! @index
+  juror: Trader! @index
+  committed: Boolean!
+  vote: Int! # 0 until revealed; then 1 YES, 2 NO, 3 AMBIGUOUS
+}
+
+# Totals across the protocol. Envio Cloud has no aggregate queries, so they're kept here. Id: "kleos".
+type Protocol {
+  id: ID!
+  marketCount: Int!
+  betCount: Int!
+  bettorCount: Int! # distinct addresses that ever bet
+  volume: BigInt!
+  callCount: Int!
+  jurorCount: Int! # current pool size
+  revenueAccrued: BigInt! # 1% of losing pools plus creation fees
+  revenueWithdrawn: BigInt!
 }

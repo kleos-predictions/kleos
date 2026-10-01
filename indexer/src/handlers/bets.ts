@@ -1,18 +1,23 @@
 // Bets, calls and settlement.
 import { indexer } from "envio";
-import { countsForReputation, eventId, getTrader, positionId } from "../utils.js";
+import { SHARP_R, STAKE_REF, countsForReputation, eventId, getProtocol, getTrader, positionId } from "../utils.js";
 
 indexer.onEvent(
   { contract: "Kleos", event: "BetPlaced", fields: { block: ["timestamp"], transaction: ["hash"] } },
   async ({ event, context }) => {
     const p = event.params;
     const marketId = p.marketId.toString();
-    const [m, trader, existing] = await Promise.all([
+    const [m, trader, existing, protocol] = await Promise.all([
       context.Market.getOrThrow(marketId),
       getTrader(context, p.user),
       context.Position.get(positionId(p.marketId, p.user)),
+      getProtocol(context),
     ]);
     const firstInMarket = !existing;
+    // The sharp signal counts each trader once per side, by their vested R at the time of the bet.
+    const sharp = trader.r >= SHARP_R;
+    const newSharpYes = sharp && p.side && !existing?.sharpYes;
+    const newSharpNo = sharp && !p.side && !existing?.sharpNo;
 
     context.Market.set({
       ...m,
@@ -24,6 +29,8 @@ indexer.onEvent(
       priceMoneyYes: p.priceMoneyYes,
       betCount: m.betCount + 1,
       bettorCount: m.bettorCount + (firstInMarket ? 1 : 0),
+      sharpYes: m.sharpYes + (newSharpYes ? 1 : 0),
+      sharpNo: m.sharpNo + (newSharpNo ? 1 : 0),
     });
 
     const pos = existing ?? {
@@ -38,6 +45,8 @@ indexer.onEvent(
       payout: 0n,
       bonusWeight: 0n,
       bonus: 0n,
+      sharpYes: false,
+      sharpNo: false,
     };
     context.Position.set({
       ...pos,
@@ -45,6 +54,8 @@ indexer.onEvent(
       noMoney: pos.noMoney + (p.side ? 0n : p.amount),
       yesEff: pos.yesEff + (p.side ? p.effective : 0n),
       noEff: pos.noEff + (p.side ? 0n : p.effective),
+      sharpYes: pos.sharpYes || newSharpYes,
+      sharpNo: pos.sharpNo || newSharpNo,
     });
 
     context.Trader.set({
@@ -52,6 +63,12 @@ indexer.onEvent(
       betCount: trader.betCount + 1,
       volume: trader.volume + p.amount,
       marketCount: trader.marketCount + (firstInMarket ? 1 : 0),
+    });
+    context.Protocol.set({
+      ...protocol,
+      betCount: protocol.betCount + 1,
+      bettorCount: protocol.bettorCount + (trader.betCount === 0 ? 1 : 0),
+      volume: protocol.volume + p.amount,
     });
 
     const id = eventId(event);
@@ -64,6 +81,8 @@ indexer.onEvent(
       effective: p.effective,
       multiplier: p.multiplier,
       entryPrice: p.entryPrice,
+      traderR: trader.r,
+      sharp,
       timestamp: event.block.timestamp,
       txHash: event.transaction.hash,
     });
@@ -82,7 +101,11 @@ indexer.onEvent(
   { contract: "Kleos", event: "CallPosted", fields: { block: ["timestamp"], transaction: ["hash"] } },
   async ({ event, context }) => {
     const p = event.params;
-    const [m, trader] = await Promise.all([context.Market.getOrThrow(p.marketId.toString()), getTrader(context, p.user)]);
+    const [m, trader, protocol] = await Promise.all([
+      context.Market.getOrThrow(p.marketId.toString()),
+      getTrader(context, p.user),
+      getProtocol(context),
+    ]);
     context.Call.set({
       id: p.callId.toString(), // numbered by Kleos; KleosSocial votes use the same id
       market_id: m.id,
@@ -97,6 +120,7 @@ indexer.onEvent(
     });
     context.Market.set({ ...m, callCount: m.callCount + 1 });
     context.Trader.set({ ...trader, callCount: trader.callCount + 1 });
+    context.Protocol.set({ ...protocol, callCount: protocol.callCount + 1 });
   },
 );
 
@@ -108,8 +132,9 @@ indexer.onEvent({ contract: "Kleos", event: "Settled" }, async ({ event, context
     getTrader(context, p.user),
   ]);
   context.Position.set({ ...pos, settled: true, payout: p.payout, bonusWeight: p.bonusWeight });
-  // Mirrors Kleos._settle: the bet counts toward activation only in deep, non-voided markets.
-  if (!m.voided && countsForReputation(m)) {
+  // Mirrors Kleos._settleReputation: only a position of at least $50 (both sides together) in a
+  // deep, non-voided market counts toward activation, so it can't be bought with $1 bets.
+  if (!m.voided && countsForReputation(m) && pos.yesMoney + pos.noMoney >= STAKE_REF) {
     context.Trader.set({ ...trader, resolvedBets: trader.resolvedBets + 1 });
   }
 });
