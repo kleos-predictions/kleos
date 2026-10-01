@@ -126,7 +126,7 @@ type Trader {
   name: String # KleosSocial username, unique, 3–20 chars of a–z, 0–9 and _
   followerCount: Int!
   followingCount: Int!
-  r: BigInt! # vested reputation
+  r: BigInt! @index # vested reputation; the leaderboard sorts by it
   pending: BigInt! # gains waiting to vest
   resolvedBets: Int! # positions of at least $50 settled in deep markets. Seeds set it without an event, so seeded traders read low
   flagged: Boolean!

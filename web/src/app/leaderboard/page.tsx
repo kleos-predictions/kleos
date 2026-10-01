@@ -13,7 +13,10 @@ export default async function LeaderboardPage() {
   // Rendered per request when live, so INDEXER_URL can be set at runtime, not only at build time.
   if (IS_LIVE) await connection();
   let traders: Trader[] = TRADERS;
-  if (indexer.HAS_INDEXER) traders = await indexer.readLeaderboard().catch(() => TRADERS);
+  if (indexer.HAS_INDEXER) traders = await indexer.readLeaderboard().catch((err) => {
+    console.error("[indexer] leaderboard unavailable:", err instanceof Error ? err.message : err);
+    return TRADERS;
+  });
   return (
     <main className="mx-auto flex w-full max-w-[1440px] flex-1 flex-col gap-7 px-4 pt-10 pb-12 md:px-12">
       <h1 className="font-dot text-[30px] leading-[1.08] font-black md:text-[46px]">
