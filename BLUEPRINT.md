@@ -220,7 +220,7 @@ Mera is the whole account layer: sign in with a passkey, get test USD, bet. No s
 
 **Ship**
 
-- [x] Git repo (private: github.com/danimim/kleos, teammate apokusin invited)
+- [x] Git repo (private: github.com/kleos-predictions/kleos, in the kleos-predictions org)
 - [ ] Make the repo public before submission (required by the Envio bounty)
 - [ ] Deploy contracts to Monad testnet: Claude prepares, **Daniela authorizes and signs**
 - [ ] Seed the demo on-chain (whale vs sharps, one market in dispute, one resolved)
