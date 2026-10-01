@@ -7,13 +7,8 @@ disable_default_cross_chain: true
 chains:
 - id: 10143
   start_block: 67114811
-  # Read from the public RPC, not HyperSync: HyperSync needs ENVIO_API_TOKEN, and Envio Cloud's
-  # free plan can't set env vars. The RPC serves eth_getLogs 100 blocks at a time.
-  rpc:
-  - url: https://testnet-rpc.monad.xyz
-    for: sync
-    initial_block_interval: 100
-    interval_ceiling: 100
+  # Read through HyperSync. Envio Cloud gives hosted indexers their own HyperSync access, so no
+  # token is set there. Running this file locally needs ENVIO_API_TOKEN in indexer/.env.
   contracts:
   - name: Kleos
     address:
@@ -31,7 +26,9 @@ chains:
     - event: Flagged(address indexed user, uint256 indexed marketId)
     - event: JurorJoined(address indexed juror)
     - event: JurorLeft(address indexed juror)
+    - event: JurorPruned(address indexed juror)
     - event: JuryDrawn(uint256 indexed marketId, uint8 round, address[] jurors)
+    - event: MarketExpired(uint256 indexed marketId)
     - event: MarketCreated(uint256 indexed marketId, address indexed creator, string question, uint8 category, string oracle, string criteria, uint64 closeTime)
     - event: MarketResolved(uint256 indexed marketId, bool outcome, uint256 fee)
     - event: MarketVoided(uint256 indexed marketId)
