@@ -57,6 +57,18 @@ export function AccountButton() {
   });
   const r = rep ? Number(rep.r) / 1e18 : 0;
 
+  // The phrase leaves memory when the dialog closes or after two minutes, and is hidden as soon as the account locks.
+  useEffect(() => {
+    if (!phrase) return;
+    const t = setTimeout(() => setPhrase(null), 2 * 60 * 1000);
+    const onKey = (e: KeyboardEvent) => e.key === "Escape" && setPhrase(null);
+    window.addEventListener("keydown", onKey);
+    return () => {
+      clearTimeout(t);
+      window.removeEventListener("keydown", onKey);
+    };
+  }, [phrase]);
+
   async function showPhrase() {
     if (!account.credential) return;
     try {
@@ -119,7 +131,7 @@ export function AccountButton() {
         </div>
       )}
 
-      {phrase && (
+      {phrase && status === "unlocked" && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4" onClick={() => setPhrase(null)}>
           <div role="dialog" aria-label="Recovery phrase" className="card flex w-full max-w-lg flex-col gap-5 p-6" onClick={(e) => e.stopPropagation()}>
             <span className="lbl">Recovery phrase</span>

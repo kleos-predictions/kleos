@@ -7,7 +7,7 @@ import { kleosAbi } from "./abi";
 import { HAS_LOGS_RPC, KLEOS_ADDRESS, SOCIAL_ADDRESS, logsClient, publicClient } from "./chain";
 import { HAS_HYPERSYNC, hypersyncEvents } from "./hypersync";
 import { kleosSocialAbi } from "./abi";
-import type { Call, FeedItem, Market, RepChange } from "./data";
+import { liveStatus, type Call, type FeedItem, type Market, type RepChange } from "./data";
 
 const WAD = 1e18;
 const DEPLOY_BLOCK = BigInt(process.env.NEXT_PUBLIC_KLEOS_DEPLOY_BLOCK ?? "0");
@@ -15,22 +15,20 @@ const DAY = new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric", t
 
 /**
  * Event reads over block ranges. With HyperRPC (or the local node) one call covers everything.
- * The public Monad RPC allows 100 blocks per eth_getLogs, so without it we fan out in parallel
- * batches. The Envio indexer replaces this for long histories.
+ * The public Monad RPC allows 100 blocks per eth_getLogs, so a scan from the deploy block would
+ * take thousands of calls and minutes (about 2,200 more calls every day). Rather than that, reads
+ * without a log source fail fast, and pages show their "history unavailable" or empty states.
+ * The Envio indexer is the real source for long histories.
  */
-async function inChunks<T>(read: (fromBlock: bigint, toBlock: bigint) => Promise<T[]>): Promise<T[]> {
-  const latest = await publicClient.getBlockNumber();
-  if (HAS_LOGS_RPC) return read(DEPLOY_BLOCK, latest);
-  const SIZE = 100n;
-  const PARALLEL = 8;
-  const ranges: [bigint, bigint][] = [];
-  for (let from = DEPLOY_BLOCK; from <= latest; from += SIZE) ranges.push([from, from + SIZE - 1n < latest ? from + SIZE - 1n : latest]);
-  const out: T[] = [];
-  for (let i = 0; i < ranges.length; i += PARALLEL) {
-    const batch = await Promise.all(ranges.slice(i, i + PARALLEL).map(([f, t]) => read(f, t)));
-    for (const logs of batch) out.push(...logs);
+export class NoLogSource extends Error {
+  constructor() {
+    super("No log source: set INDEXER_URL, ENVIO_API_TOKEN or MONAD_LOGS_RPC to read event history");
   }
-  return out;
+}
+
+async function allLogs<T>(read: (fromBlock: bigint, toBlock: bigint) => Promise<T[]>): Promise<T[]> {
+  if (!HAS_LOGS_RPC) throw new NoLogSource();
+  return read(DEPLOY_BLOCK, await publicClient.getBlockNumber());
 }
 
 type KleosEvent = "ReputationChanged" | "CallPosted";
@@ -46,13 +44,12 @@ async function kleosEvents<E extends KleosEvent>(eventName: E, args: Record<stri
   if (HAS_HYPERSYNC) {
     return hypersyncEvents({ address: KLEOS_ADDRESS!, abi: kleosAbi, eventName, args, fromBlock: DEPLOY_BLOCK }) as Promise<TimedLog<E>[]>;
   }
-  const logs = await inChunks((fromBlock, toBlock) =>
+  const logs = await allLogs((fromBlock, toBlock) =>
     logsClient.getContractEvents({ address: KLEOS_ADDRESS!, abi: kleosAbi, eventName, args, fromBlock, toBlock } as never),
   );
-  const times = new Map<bigint, number>();
-  for (const log of logs as { blockNumber: bigint }[]) {
-    if (!times.has(log.blockNumber)) times.set(log.blockNumber, Number((await publicClient.getBlock({ blockNumber: log.blockNumber })).timestamp));
-  }
+  const blocks = [...new Set((logs as { blockNumber: bigint }[]).map((l) => l.blockNumber))];
+  const stamps = await Promise.all(blocks.map((blockNumber) => publicClient.getBlock({ blockNumber }).then((b) => Number(b.timestamp))));
+  const times = new Map(blocks.map((b, i) => [b, stamps[i]] as const));
   return (logs as unknown as TimedLog<E>[]).map((l) => ({ ...l, timestamp: times.get(l.blockNumber)! }));
 }
 
@@ -78,17 +75,17 @@ export async function readProfile(user: Address): Promise<LiveProfile> {
     const logs = await kleosEvents("ReputationChanged", { user });
     const questions = new Map<bigint, string>();
     const positioned = new Map<bigint, boolean>(); // a bettor's change is a bet; anyone else's is jury duty
-    for (const log of logs) {
-      const id = log.args.marketId!;
-      if (id > 0n && !questions.has(id)) {
+    const ids = [...new Set(logs.map((log) => log.args.marketId!).filter((id) => id > 0n))];
+    await Promise.all(
+      ids.map(async (id) => {
         const [m, hasBet] = await Promise.all([
           publicClient.readContract({ address: KLEOS_ADDRESS!, abi: kleosAbi, functionName: "getMarket", args: [id] }),
           publicClient.readContract({ address: KLEOS_ADDRESS!, abi: kleosAbi, functionName: "hasBet", args: [id, user] }),
         ]);
         questions.set(id, m.question);
         positioned.set(id, hasBet);
-      }
-    }
+      }),
+    );
     history = logs
       .map((log) => {
         const a = log.args;
@@ -190,8 +187,9 @@ export async function readCalls(marketId: number, limit = 10): Promise<Call[]> {
 
 export async function readFeed(limit = 50, user?: Address): Promise<FeedItem[]> {
   const rows = await readCallLogs(undefined, limit, user);
-  const markets = new Map<number, Awaited<ReturnType<typeof readMarket>>>();
-  for (const { marketId } of rows) if (!markets.has(marketId)) markets.set(marketId, await readMarket(marketId));
+  const ids = [...new Set(rows.map((r) => r.marketId))];
+  const fetched = await Promise.all(ids.map(readMarket));
+  const markets = new Map(ids.map((id, i) => [id, fetched[i]] as const));
   const items = rows.map(({ call, marketId }) => {
     const m = markets.get(marketId)!;
     const resolved = m.state === 3; // State.Resolved
@@ -227,7 +225,7 @@ export async function readLiveMarket(id: number): Promise<Market | null> {
   const byTeam = m.creator.toLowerCase() === owner.toLowerCase();
   const creatorName = byTeam ? undefined : (await readNames([m.creator]).catch(() => new Map<string, string>())).get(m.creator.toLowerCase());
   const closeMs = Number(m.closeTime) * 1000;
-  const status: Market["status"] = m.state === 3 ? "resolved" : m.state >= 1 ? "dispute" : closeMs - Date.now() < 86_400_000 ? "closing" : "live";
+  const status = liveStatus((["Open", "Proposed", "Disputed", "Resolved"] as const)[m.state], closeMs);
   return {
     id,
     question: m.question,

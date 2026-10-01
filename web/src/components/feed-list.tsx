@@ -94,7 +94,7 @@ export function FeedList({ items, tabs = true }: { items: FeedItem[]; tabs?: boo
             ["following", "Following"],
           ] as const
         ).map(([id, label]) => (
-          <button key={id} role="tab" aria-selected={tab === id} aria-pressed={tab === id} className="btn btn-chip" onClick={() => setTab(id)}>
+          <button key={id} role="tab" aria-selected={tab === id} className="btn btn-chip" onClick={() => setTab(id)}>
             {label}
           </button>
         ))}

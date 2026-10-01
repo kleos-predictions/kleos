@@ -25,7 +25,10 @@ export const IS_LIVE = Boolean(KLEOS_ADDRESS && USD_ADDRESS);
 export const POLLING_MS = 250;
 // On the server, MONAD_RPC_URL (a private node, never sent to the browser) replaces the public RPC.
 const serverRpc = typeof window === "undefined" && !IS_LOCAL_CHAIN ? process.env.MONAD_RPC_URL : undefined;
-export const publicClient = createPublicClient({ chain, transport: http(serverRpc), pollingInterval: POLLING_MS });
+// Reads made together are batched into one multicall where the chain has Multicall3 (Monad
+// testnet does; a bare local node doesn't).
+const batch = chain.contracts && "multicall3" in chain.contracts ? { multicall: true } : undefined;
+export const publicClient = createPublicClient({ chain, transport: http(serverRpc), pollingInterval: POLLING_MS, batch });
 
 // Event reads on the server go through Envio's HyperRPC when MONAD_LOGS_RPC is set
 // (https://10143.rpc.hypersync.xyz/<ENVIO_API_TOKEN>): it serves eth_getLogs over any block range,

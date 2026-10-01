@@ -54,9 +54,13 @@ Daniela's `seed-demo.ts` on `main` (commit `3a8d383`) now resolves and settles a
 
 ### Phase 5: web
 - Note: the free Envio plan allows 100 queries a minute across all visitors. `indexer.ts` makes one GraphQL request per page and caches it briefly (Next `revalidate`), never one query per component.
-- [ ] `web/src/lib/indexer.ts`
+- [x] `web/src/lib/indexer.ts` (2026-10-01): one GraphQL query per read, `fetch` with `next.revalidate` 10 s, server-only. Pages use `preferIndexer(indexer, chain)`, which falls back to `onchain.ts` and logs why. Skipped in demo mode and on the local chain (the deployment serves testnet)
+- [x] Wired: `/markets` and market pages past the samples, market calls, recent bets (indexer only), the feed, profiles (history, wins, losses, name; R, pending, resolvedBets and the flag stay on the contract) and the leaderboard (indexer only; samples otherwise)
+- [x] Checked against the deployment with a testnet dev server: every page 200, indexed data on each (20 leaderboard rows, market 7's 3 sharps and real bets, feed, profile history). With a broken `INDEXER_URL` the fallback fires; the chain readers are then slow without `ENVIO_API_TOKEN`
+- [x] README: data flow section
+- [x] Review follow-ups (2026-10-01): `CallPosted` no longer runs a `CallVote.getWhere` per event. Votes on a call that isn't indexed yet keep a running tally in `PendingCallTally` (id = callId), which `CallPosted` reads by id and deletes. Composite indexes match the web's queries: `Bet` and `Call` on (market, timestamp DESC), `Call` and `ReputationChange` on (trader, timestamp DESC). Simulated and testnet tests pass
 - [ ] `court-panel.tsx`, `bet-buddies.tsx`
-- [ ] Wiring PR (announce to Daniela first)
+- [ ] Announce the wiring to Daniela (pages changed: markets, market, feed, profile, leaderboard)
 
 ### Phase 6: testnet + Envio Cloud (needs Daniela)
 - [x] Runbook: `DEPLOY.md` (checked against Envio docs; the indexer builds under Envio Cloud's pnpm 10.32)
@@ -74,7 +78,8 @@ Daniela's `seed-demo.ts` on `main` (commit `3a8d383`) now resolves and settles a
 - [x] ~~Testnet config reads from the public RPC~~ (2026-10-01, reverted the same day): Envio's docs say hosted indexers "have their own access to HyperSync and don't need a token", so the testnet config reads HyperSync again: 0.5 s for the full range instead of 532 s
 - [x] Start block moved to 67114786, KleosSocial's deploy block (Kleos followed at 67114811)
 - [x] `DEPLOY.md` rewritten around the free plan's checked limits: 3 deployments at once, a URL per deployment, 30-day lifetime, and the deploy schedule that keeps one alive through judging
-- [ ] First Cloud deployment (needs the commits pushed and the owner's go-ahead), then `INDEXER_URL` for #3
+- [x] First Cloud deployment (2026-10-01): `cebb79d`, endpoint `https://indexer.dev.hyperindex.xyz/25439e6/v1/graphql`. Built and synced in about a minute, `is_hyper_sync: true` with no token, no warnings or errors in the logs. Every market, trader, call and the juror pool match the contracts. Deleted automatically around Oct 31
+- [ ] `INDEXER_URL` for #3 (set it to the endpoint above)
 - [ ] Final deployment on Oct 12–13; README data flow; close #1 and #2
 
 ## Decisions

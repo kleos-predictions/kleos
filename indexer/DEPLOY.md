@@ -19,6 +19,7 @@ Facts below were checked on 2026-10-01 against Envio's docs, the pricing page an
 | Indexer | `kleos`: repo `kleos-predictions/kleos`, branch `main`, root directory `indexer`, config file `config.testnet.yaml`, auto-deploy **off** |
 | GitHub app | Envio Deployments, installed on the `kleos-predictions` org |
 | Data source | HyperSync. Hosted indexers get their own HyperSync access, so Envio Cloud needs no token or env vars |
+| Deployments | `cebb79d`, deployed 2026-10-01, deleted automatically around Oct 31. GraphQL: `https://indexer.dev.hyperindex.xyz/25439e6/v1/graphql`. Synced through HyperSync with no token; matches the contracts |
 
 ## Free plan rules that shape how we work
 
@@ -90,7 +91,7 @@ Pages read indexer → RPC → sample data, so nothing breaks while `INDEXER_URL
 
 | When | Deployment |
 |---|---|
-| Now | First deployment, for building `web/src/lib/indexer.ts` (#3) against real data |
+| Oct 1 (done) | First deployment, `cebb79d`, for building `web/src/lib/indexer.ts` (#3) against real data |
 | As needed | One per indexer change worth showing. Delete the previous one |
 | Oct 12–13 | The final one, after the last indexer change. It is the one judges see, and it lives until about Nov 12 |
 | Weekly until Nov 4 | `deployment status`, and a page load on the live site |

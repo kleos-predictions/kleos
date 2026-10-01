@@ -23,7 +23,7 @@ Prediction markets are failing in four specific ways. Each one has a direct answ
 - Small crowds of proven forecasters outperform larger crowds in both markets and polls (Atanasov, Witkowski, Mellers & Tetlock, *International Journal of Forecasting*, 2025). [Source](https://www.sciencedirect.com/science/article/abs/pii/S0169207023001413)
 - Across 5,456 Polymarket and Kalshi markets, bigger bettors were not more accurate; in some markets whales had negative edge (Daleep et al., 2026). [Source](https://klementoninvesting.substack.com/p/a-fundamental-flaw-of-prediction)
 
-> **Implementation status:** every answer above is implemented and tested in `contracts/` (37 tests). The Monad testnet deployment is pending.
+> **Implementation status:** every answer above is implemented and tested in `contracts/` (48 tests). The contracts are deployed on Monad testnet (`contracts/ignition/deployments/chain-10143/deployed_addresses.json`).
 
 ## How it works
 
@@ -78,6 +78,18 @@ npm run deploy:local && npm run seed:local && npm run court-bot
 ```
 
 `deploy:local` writes the addresses into `web/.env.local`. On Monad testnet, set `ENVIO_API_TOKEN` in the web server's env: event reads go through Envio HyperSync, since the public RPC serves logs 100 blocks at a time. Set `KLEOS_ME=0x…` before `seed:local` to give your passkey account demo reputation, and use `npm run dispute` to send a proposal to the court.
+
+## Data flow
+
+```
+Kleos.sol, KleosSocial.sol (Monad testnet)
+  → events
+  → Envio HyperIndex on Envio Cloud (indexer/, reads the chain through HyperSync)
+  → GraphQL, queried only by the web server (web/src/lib/indexer.ts, cached 10 s)
+  → pages
+```
+
+Markets, prices, recent bets, the sharp signal, calls, the feed, the leaderboard and reputation history come from the indexer. Balances, the trade panel and the account's own reputation are read from the contracts, because they must be exact at the moment of an action. Set the server-only `INDEXER_URL` to the deployment's GraphQL endpoint (`indexer/DEPLOY.md`). Without it, or if the indexer fails, pages read the chain directly, and with no contract addresses they show sample data.
 
 ## Known limitations
 

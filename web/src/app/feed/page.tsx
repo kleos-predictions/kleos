@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { sampleFeed, type FeedItem } from "@/lib/data";
 import { IS_LIVE } from "@/lib/chain";
 import { readFeed } from "@/lib/onchain";
+import * as indexer from "@/lib/indexer";
 import { FeedList } from "@/components/feed-list";
 
 export const metadata: Metadata = {
@@ -11,7 +12,7 @@ export const metadata: Metadata = {
 
 export default async function FeedPage() {
   let items: FeedItem[] = sampleFeed();
-  if (IS_LIVE) items = await readFeed().catch(() => []);
+  if (IS_LIVE) items = await indexer.preferIndexer(() => indexer.readFeed(), () => readFeed()).catch(() => []);
 
   return (
     <main className="mx-auto flex w-full max-w-[860px] flex-1 flex-col gap-7 px-4 pt-10 pb-16 md:px-12">
