@@ -57,7 +57,7 @@ for (;;) {
         const salt = keccak256(toHex(`${k}:${Math.random()}`));
         const vote = voteFor(m.proposedOutcome);
         const commitment = await kleos.read.voteCommitment([id, court.round, j, vote, salt]);
-        await kleos.write.commitVote([id, commitment], { account: jurors.get(j.toLowerCase())!.account });
+        await publicClient.waitForTransactionReceipt({ hash: await kleos.write.commitVote([id, commitment], { account: jurors.get(j.toLowerCase())!.account }) });
         salts.set(k, salt);
         console.log(`market ${id} round ${court.round}: ${j} committed a hidden vote`);
       }
@@ -66,11 +66,11 @@ for (;;) {
         const k = `${key}:${j.toLowerCase()}`;
         const salt = salts.get(k);
         if (!salt || (await kleos.read.votes([id, court.round, j])) !== 0) continue;
-        await kleos.write.revealVote([id, voteFor(m.proposedOutcome), salt], { account: jurors.get(j.toLowerCase())!.account });
+        await publicClient.waitForTransactionReceipt({ hash: await kleos.write.revealVote([id, voteFor(m.proposedOutcome), salt], { account: jurors.get(j.toLowerCase())!.account }) });
         console.log(`market ${id} round ${court.round}: ${j} revealed`);
       }
     } else {
-      await kleos.write.closeCourt([id], { account: owner.account });
+      await publicClient.waitForTransactionReceipt({ hash: await kleos.write.closeCourt([id], { account: owner.account }) });
       done.add(key);
       console.log(`market ${id} round ${court.round}: court closed`);
     }
