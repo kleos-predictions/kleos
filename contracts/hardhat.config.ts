@@ -1,5 +1,11 @@
 import { configVariable, defineConfig } from "hardhat/config";
 import hardhatToolboxViem from "@nomicfoundation/hardhat-toolbox-viem";
+import { existsSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+
+// Deploy key from scripts/import-deployer.mjs (git-ignored). Without it, the keystore is used.
+const deployerEnv = fileURLToPath(new URL("./.env.deployer", import.meta.url));
+if (existsSync(deployerEnv)) process.loadEnvFile(deployerEnv);
 
 export default defineConfig({
   plugins: [hardhatToolboxViem],
