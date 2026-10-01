@@ -21,9 +21,23 @@ const publicClient = await viem.getPublicClient();
 const chainId = await publicClient.getChainId();
 const deployed = JSON.parse(readFileSync(`ignition/deployments/chain-${chainId}/deployed_addresses.json`, "utf8"));
 
-const kleos = await viem.getContractAt("Kleos", deployed["KleosModule#Kleos"] as Address);
-const usd = await viem.getContractAt("KleosUSD", deployed["KleosModule#KleosUSD"] as Address);
-const social = await viem.getContractAt("KleosSocial", deployed["KleosModule#KleosSocial"] as Address);
+// Every write waits for its receipt. On Monad, a wallet's next transaction can otherwise reuse the
+// nonce of one still pending ("An existing transaction had higher priority"), and a bet can run
+// before the mint that funds it. Re-running after a failure is safe: these calls are idempotent.
+function confirmed<T extends { write: object }>(contract: T): T {
+  const write = new Proxy(contract.write, {
+    get: (target, key) => async (...args: unknown[]) => {
+      const hash = await (target as Record<PropertyKey, (...a: unknown[]) => Promise<`0x${string}`>>)[key](...args);
+      await publicClient.waitForTransactionReceipt({ hash });
+      return hash;
+    },
+  });
+  return { ...contract, write };
+}
+
+const kleos = confirmed(await viem.getContractAt("Kleos", deployed["KleosModule#Kleos"] as Address));
+const usd = confirmed(await viem.getContractAt("KleosUSD", deployed["KleosModule#KleosUSD"] as Address));
+const social = confirmed(await viem.getContractAt("KleosSocial", deployed["KleosModule#KleosSocial"] as Address));
 
 const [owner] = await viem.getWalletClients();
 const LOCAL = chainId === LOCAL_CHAIN_ID;
@@ -112,7 +126,7 @@ const me = process.env.KLEOS_ME as Address | undefined;
 if (me) {
   await kleos.write.seedReputation([me, parseEther("20"), 10], { account: owner.account }); // tier IV: can propose
   await usd.write.sponsorMint([me, usdAmount(1000)], { account: owner.account });
-  await owner.sendTransaction({ to: me, value: parseEther(LOCAL ? "1" : "0.05") });
+  await publicClient.waitForTransactionReceipt({ hash: await owner.sendTransaction({ to: me, value: parseEther(LOCAL ? "1" : "0.05") }) });
   console.log(`Demo reputation for ${me}: R = 20`);
 }
 
@@ -127,7 +141,8 @@ async function createMarket(question: string, category: number, oracle: string, 
 // A market that resolves during seeding: 11 bettors, $1,000+ pool, so reputation really moves.
 const resolved = await createMarket(
   "Kleos demo: does the first Monad testnet block of the day land under a second?", 3, "Monad testnet explorer",
-  "YES if the first block after 00:00 UTC is produced within 1 second of the previous one.", 25,
+  "YES if the first block after 00:00 UTC is produced within 1 second of the previous one.",
+  LOCAL ? 25 : 120, // on testnet, 11 confirmed bets need time before it closes
 );
 const RESOLVED_BETS: [boolean, number, string?][] = [
   [true, 150, "Monad's 400ms blocks make this easy"], [true, 120, "Block times haven't slipped all week"], [true, 100],
