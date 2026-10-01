@@ -26,6 +26,9 @@ export const countsForReputation = (m: { yesMoney: bigint; noMoney: bigint; bett
 export function getTrader(context: EvmOnEventContext, address: string): Promise<Trader> {
   return context.Trader.getOrCreate({
     id: addressId(address),
+    name: undefined,
+    followerCount: 0,
+    followingCount: 0,
     r: 0n,
     pending: 0n,
     resolvedBets: 0,
