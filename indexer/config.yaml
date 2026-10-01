@@ -9,7 +9,7 @@ chains:
   - name: Kleos
     address:
     # A fresh local node always deploys Kleos here. If the deploy order changes, set
-    # ENVIO_LOCAL_KLEOS_ADDRESS (not ENVIO_KLEOS_ADDRESS, which is the testnet one in .env).
+    # ENVIO_LOCAL_KLEOS_ADDRESS.
     - "${ENVIO_LOCAL_KLEOS_ADDRESS:-0x9fE46736679d2D9a65F0992F2272dE9f3c7fa6e0}"
     events:
     - event: BetPlaced(uint256 indexed marketId, address indexed user, bool side, uint256 amount, uint256 effective, uint256 multiplier, uint256 entryPrice, uint256 priceRepYes, uint256 priceMoneyYes)

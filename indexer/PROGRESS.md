@@ -67,7 +67,7 @@ Daniela's `seed-demo.ts` on `main` (commit `3a8d383`) now resolves and settles a
 - [ ] Ask Envio how the hackathon's "3 months free" offer is claimed (no "Developer" plan on the pricing page, no Envio voucher in the Metropolis perks)
 - [x] Contracts on Monad testnet (Daniela, 2026-09-30): Kleos `0xd68a1F212fa52663468BBB6F0456Cd6e7Ce854Cb`, deployed in block 67114811. Deployed bytecode of all three contracts matches the source on `main`.
 - [x] Real testnet range tested locally (2026-10-01): with `config.testnet.yaml` and the values above, the handlers indexed blocks 67114811–67345206: 8 markets (matches `marketCount`), 33 bets, 14 calls, 20 traders, 27 reputation changes. Bettor counts and both prices match the contract for every market.
-- [ ] Write the address and start block into `config.testnet.yaml` as literals
+- [x] Address and start block written into `config.testnet.yaml` as literals (2026-10-01)
 - [ ] Cloud deploy, README data flow, close #1 and #2
 
 ## Decisions

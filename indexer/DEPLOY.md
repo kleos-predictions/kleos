@@ -42,22 +42,12 @@ Facts below were checked on 2026-09-29 against Envio's docs and this repo. Envio
 
 In the Envio dashboard, install the **Envio Deployments** GitHub app and grant it access to `kleos-predictions/kleos`. Only an owner of the `kleos-predictions` organization can do this. The app works on private repos, so this doesn't have to wait for the repo to go public.
 
-## 3. Testnet config (done, waiting on step 0)
+## 3. Testnet config (done)
 
 `config.yaml` stays pointed at the local chain, because the tests use it. `config.testnet.yaml` is what Envio Cloud runs:
 - the same `name`, `disable_default_cross_chain: true` and all 28 events as `config.yaml`
 - chain `10143` with no `rpc:` entry, since HyperSync serves it natively
-- the address and start block read from env vars: `${ENVIO_KLEOS_ADDRESS}` and `${ENVIO_KLEOS_START_BLOCK}`
-
-Envio substitutes env vars before it parses the file, so both fields work and are still validated: a non-number start block or a malformed address fails codegen. A missing variable fails codegen too, naming the variable. Checked with:
-
-```bash
-ENVIO_KLEOS_ADDRESS=0x1111111111111111111111111111111111111111 ENVIO_KLEOS_START_BLOCK=12345678 \
-  pnpm envio codegen --config config.testnet.yaml
-pnpm codegen   # back to the local config afterwards; the tests use its generated types
-```
-
-After step 0, either set the two values as env vars (locally in `.env`, see `.env.example`; on Envio Cloud in step 5), or write them into `config.testnet.yaml` as literals. Literals make the public config show the real contract, which helps judges. Changing either one needs a new deployment.
+- the Kleos address and start block from step 0 as literals, so the public config shows the real contract. A contract redeploy needs both changed, and a new indexer deployment.
 
 Before any deploy, check it locally against real testnet data. No Docker is needed: `createTestIndexer` can process a real testnet block range with `ENVIO_API_TOKEN` set.
 
@@ -76,16 +66,15 @@ npx envio-cloud indexer add --name kleos --repo kleos-predictions/kleos --branch
 |---|---|---|
 | Root directory | `indexer` | This is a monorepo |
 | Config file | `config.testnet.yaml` | `config.yaml` is the local one |
-| Deployment branch | `main` | The indexer lives on `main` once PR #5 merges |
+| Deployment branch | `main` | |
 | Automatically deploy on push | **Off** | `main` gets frequent pushes, mostly web changes. The free plan allows 3 deployments per indexer, and each one re-indexes and may change the URL, so we deploy on purpose |
 | Env var | `ENVIO_API_TOKEN` = the token from step 1 | HyperSync access. Keys must start with `ENVIO_`, and changes apply on the next deployment |
-| Env vars | `ENVIO_KLEOS_ADDRESS`, `ENVIO_KLEOS_START_BLOCK` from step 0 | Only if `config.testnet.yaml` still reads them from env vars (step 3) |
 
 The config file path is relative to the root directory. Envio Cloud uploads only the root directory, and skips dotfiles and any folder named `generated` or `node_modules`, so `.env` is never uploaded.
 
 ```bash
 npx envio-cloud indexer settings set kleos      # root dir, config file, branch
-npx envio-cloud indexer env set kleos           # ENVIO_API_TOKEN, plus the two above if needed
+npx envio-cloud indexer env set kleos           # ENVIO_API_TOKEN
 ```
 
 ## 6. Deploy and verify
