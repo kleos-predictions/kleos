@@ -47,7 +47,7 @@ flowchart LR
   sample -->|"no chain configured"| pages
 ```
 
-Both configs list the same contracts and events. Only the chain, the addresses and the data source differ. Envio Cloud runs `config.testnet.yaml`. The Cloud deploy and `web/src/lib/indexer.ts` are still to come.
+Both configs list the same contracts and events. Only the chain, the addresses and the data source differ. Envio Cloud runs `config.testnet.yaml`.
 
 Pages pick the first source that's configured: indexer, then RPC, then sample data. Only the indexer path is new. The other two keep working throughout.
 
