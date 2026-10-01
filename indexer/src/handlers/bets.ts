@@ -101,10 +101,11 @@ indexer.onEvent(
   { contract: "Kleos", event: "CallPosted", fields: { block: ["timestamp"], transaction: ["hash"] } },
   async ({ event, context }) => {
     const p = event.params;
-    const [m, trader, protocol] = await Promise.all([
+    const [m, trader, protocol, earlier] = await Promise.all([
       context.Market.getOrThrow(p.marketId.toString()),
       getTrader(context, p.user),
       getProtocol(context),
+      context.CallVote.getWhere({ call_id: { _eq: p.callId.toString() } }),
     ]);
     context.Call.set({
       id: p.callId.toString(), // numbered by Kleos; KleosSocial votes use the same id
@@ -115,6 +116,9 @@ indexer.onEvent(
       entryPrice: p.entryPrice,
       text: p.text,
       result: "Open",
+      // Votes can come in before the call itself, so start from whatever is already there.
+      ups: earlier.filter((v) => v.value > 0).length,
+      downs: earlier.filter((v) => v.value < 0).length,
       timestamp: event.block.timestamp,
       txHash: event.transaction.hash,
     });

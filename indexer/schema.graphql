@@ -123,6 +123,9 @@ type PricePoint {
 
 type Trader {
   id: ID! # lowercase address
+  name: String # KleosSocial username, unique, 3–20 chars of a–z, 0–9 and _
+  followerCount: Int!
+  followingCount: Int!
   r: BigInt! # vested reputation
   pending: BigInt! # gains waiting to vest
   resolvedBets: Int! # positions of at least $50 settled in deep markets. Seeds set it without an event, so seeded traders read low
@@ -141,6 +144,9 @@ type Trader {
   reputationChanges: [ReputationChange!]! @derivedFrom(field: "trader")
   calls: [Call!]! @derivedFrom(field: "trader")
   juryVotes: [JurorVote!]! @derivedFrom(field: "juror")
+  following: [Follow!]! @derivedFrom(field: "follower")
+  followers: [Follow!]! @derivedFrom(field: "followee")
+  callVotes: [CallVote!]! @derivedFrom(field: "voter")
 }
 
 # Every ReputationChanged event, so anyone can rebuild R and check the math.
@@ -170,8 +176,28 @@ type Call {
   entryPrice: BigInt!
   text: String!
   result: CallResult!
+  ups: Int! # KleosSocial votes: engagement only, never money or reputation
+  downs: Int!
   timestamp: Int! @index
   txHash: String!
+  votes: [CallVote!]! @derivedFrom(field: "call")
+}
+
+# KleosSocial: one address following another. Id: follower_followee. Deleted on unfollow.
+type Follow {
+  id: ID!
+  follower: Trader! @index
+  followee: Trader! @index
+  since: Int!
+}
+
+# KleosSocial: one address's vote on one call. Id: callId_voter. Deleted when the vote is cleared.
+# KleosSocial doesn't check that the call exists, so a vote can name a call id not posted yet.
+type CallVote {
+  id: ID!
+  call: Call! @index
+  voter: Trader! @index
+  value: Int! # 1 up, -1 down
 }
 
 # One Kleos Court round on a disputed market. Id: marketId_round. A round with no verdict either

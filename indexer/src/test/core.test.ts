@@ -402,3 +402,51 @@ describe("protocol totals", () => {
     });
   });
 });
+
+describe("social", () => {
+  const social = <E extends "NameSet" | "Followed" | "Unfollowed" | "CallVoted">(event: E, n: number, params: Record<string, unknown>, logIndex = 0) =>
+    ({ contract: "KleosSocial", event, block: { number: n, timestamp: n }, logIndex, params }) as const;
+
+  it("usernames: the latest one wins", async (t) => {
+    const indexer = createTestIndexer();
+    await run(indexer, [social("NameSet", 1, { user: alice, name: "alice" }), social("NameSet", 2, { user: alice, name: "alice_2" })]);
+    t.expect((await indexer.Trader.getOrThrow(alice.toLowerCase())).name).toBe("alice_2");
+  });
+
+  it("follows and unfollows keep both counts and the edge list in step", async (t) => {
+    const indexer = createTestIndexer();
+    await run(indexer, [
+      social("Followed", 1, { follower: alice, followee: carol }),
+      social("Followed", 2, { follower: bob, followee: carol }),
+      social("Followed", 3, { follower: carol, followee: alice }),
+      social("Unfollowed", 4, { follower: alice, followee: carol }),
+    ]);
+    const tr = async (a: string) => indexer.Trader.getOrThrow(a.toLowerCase());
+    t.expect(await tr(carol)).toMatchObject({ followerCount: 1, followingCount: 1 });
+    t.expect(await tr(alice)).toMatchObject({ followerCount: 1, followingCount: 0 });
+    t.expect((await indexer.Follow.getAll()).map((f) => f.id).sort()).toEqual(
+      [`${bob}_${carol}`, `${carol}_${alice}`].map((id) => id.toLowerCase()).sort(),
+    );
+    t.expect(await indexer.Follow.getOrThrow(`${bob}_${carol}`.toLowerCase())).toMatchObject({ since: 2 });
+  });
+
+  it("call votes: changes and clears move the tallies; votes before the call still count", async (t) => {
+    const hash = tx("v");
+    const indexer = createTestIndexer();
+    await run(indexer, [
+      categoryAdded(), marketCreated(),
+      // KleosSocial doesn't check the call exists: these land before CallPosted.
+      social("CallVoted", 3, { callId: 1n, voter: bob, vote: 1n }),
+      social("CallVoted", 3, { callId: 1n, voter: carol, vote: -1n }, 1),
+      betPlaced({ user: alice, side: true, amount: usd(10), n: 4, hash }),
+      callPosted({ callId: 1n, user: alice, side: true, text: "Up", n: 4, logIndex: 1, hash }),
+      social("CallVoted", 5, { callId: 1n, voter: carol, vote: 1n }), // down → up
+      social("CallVoted", 6, { callId: 1n, voter: addr(9), vote: -1n }),
+      social("CallVoted", 7, { callId: 1n, voter: bob, vote: 0n }), // cleared
+    ]);
+    t.expect(await indexer.Call.getOrThrow("1")).toMatchObject({ ups: 1, downs: 1 });
+    t.expect((await indexer.CallVote.getAll()).map((v) => [v.voter_id, v.value]).sort()).toEqual(
+      [[carol.toLowerCase(), 1], [addr(9).toLowerCase(), -1]].sort(),
+    );
+  });
+});

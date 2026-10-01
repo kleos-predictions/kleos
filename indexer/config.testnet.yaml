@@ -2,11 +2,12 @@
 name: kleos-indexer
 disable_default_cross_chain: true
 # Monad testnet. Envio Cloud runs this file.
-# Kleos as deployed on 2026-09-30 (contracts/ignition/deployments/chain-10143). A redeploy of
-# the contracts needs both values changed.
+# Contracts as deployed on 2026-09-30 (contracts/ignition/deployments/chain-10143). The start
+# block is KleosSocial's deploy block (67114786); Kleos followed in 67114811. A redeploy of the
+# contracts needs the addresses and the start block changed.
 chains:
 - id: 10143
-  start_block: 67114811
+  start_block: 67114786
   # Read through HyperSync. Envio Cloud gives hosted indexers their own HyperSync access, so no
   # token is set there. Running this file locally needs ENVIO_API_TOKEN in indexer/.env.
   contracts:
@@ -44,3 +45,11 @@ chains:
     - event: Vested(address indexed user, uint256 amount, uint256 newR)
     - event: VoteCommitted(uint256 indexed marketId, uint8 round, address indexed juror)
     - event: VoteRevealed(uint256 indexed marketId, uint8 round, address indexed juror, uint8 vote)
+  - name: KleosSocial
+    address:
+    - "0x766d184Fc25Fe88d30cF62dC9A391cBb2975B9aA"
+    events:
+    - event: CallVoted(uint256 indexed callId, address indexed voter, int8 vote)
+    - event: Followed(address indexed follower, address indexed followee)
+    - event: NameSet(address indexed user, string name)
+    - event: Unfollowed(address indexed follower, address indexed followee)
