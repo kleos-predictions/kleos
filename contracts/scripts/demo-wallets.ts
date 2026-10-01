@@ -15,8 +15,9 @@ const COUNT = 19; // 6 personas, 8 jurors, 5 extra bettors
 // Wallet layout shared by every script: personas 0–5, jurors 6–13, extra bettors 14–18.
 export const ROLES = { personas: [0, 6], jurors: [6, 14], extras: [14, 19] } as const;
 
-// Gas budgets per role at ~100 gwei, with headroom (Monad charges the gas limit).
-const BUDGET = { persona: parseEther("0.12"), juror: parseEther("0.05"), extra: parseEther("0.04") };
+// Gas budgets per role. Monad charges the gas limit, about 0.02 MON a transaction at ~100 gwei.
+// A persona sends ~17 (name, bets, follows, votes, demo bets), a juror ~6, an extra bettor ~3.
+const BUDGET = { persona: parseEther("0.4"), juror: parseEther("0.12"), extra: parseEther("0.08") };
 
 function readDemoEnv(): Record<string, string> {
   if (!existsSync(DEMO_ENV)) return {};

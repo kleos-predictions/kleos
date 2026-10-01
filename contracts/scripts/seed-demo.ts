@@ -70,17 +70,28 @@ const PERSONAS: Persona[] = [
 const calls: { id: bigint; author: number }[] = [];
 // A call's id comes from its CallPosted log. BetPlaced in the same tx also has 3 topics, so match the event.
 
+// Re-runs skip what's already on chain. Persona calls are the contract's first calls, numbered
+// from 1 in this order, so a call that already exists keeps its expected id.
+let callNo = 0n;
 for (const [i, p] of PERSONAS.entries()) {
   const w = wallets[i];
   const a = w.account.address;
-  await kleos.write.seedReputation([a, parseEther(String(p.r)), p.resolved], { account: owner.account });
-  await usd.write.sponsorMint([a, usdAmount(Math.min(p.cash, 1000))], { account: owner.account });
-  for (let extra = p.cash - 1000; extra > 0; extra -= 1000) {
-    await usd.write.sponsorMint([a, usdAmount(Math.min(extra, 1000))], { account: owner.account });
+  if ((await social.read.nameOf([a])) !== p.name) {
+    await kleos.write.seedReputation([a, parseEther(String(p.r)), p.resolved], { account: owner.account });
+    await usd.write.sponsorMint([a, usdAmount(Math.min(p.cash, 1000))], { account: owner.account });
+    for (let extra = p.cash - 1000; extra > 0; extra -= 1000) {
+      await usd.write.sponsorMint([a, usdAmount(Math.min(extra, 1000))], { account: owner.account });
+    }
+    await social.write.setName([p.name], { account: w.account });
   }
-  await social.write.setName([p.name], { account: w.account });
 
   for (const [marketId, side, amount, text] of p.bets) {
+    if (text) callNo++;
+    const bettors = await kleos.read.getBettors([BigInt(marketId)]);
+    if (bettors.some((b) => b.toLowerCase() === a.toLowerCase())) {
+      if (text) calls.push({ id: callNo, author: i });
+      continue;
+    }
     const hash = text
       ? await kleos.write.betWithCall([BigInt(marketId), side, usdAmount(amount), text], { account: w.account })
       : await kleos.write.bet([BigInt(marketId), side, usdAmount(amount)], { account: w.account });
