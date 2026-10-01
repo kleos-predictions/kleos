@@ -187,6 +187,7 @@ export function TradePanel({ market }: { market: Market }) {
           <input
             value={call}
             onChange={(e) => setCall(e.target.value)}
+            aria-label="Your call, optional"
             placeholder="Why? One line, public and permanent"
             className="rounded-[12px] border border-line bg-ground px-4 py-3 text-[15px] text-ink outline-none placeholder:text-muted focus:border-line-strong"
           />
@@ -280,7 +281,7 @@ export function TradePanel({ market }: { market: Market }) {
 function BetProgress({ step }: { step: Step }) {
   const at = STEPS.findIndex(([s]) => s === step);
   return (
-    <ol className="grid grid-cols-3 gap-2" aria-label="Placing your bet" role="status">
+    <ol className="grid grid-cols-3 gap-2" aria-label="Placing your bet" role="status" aria-live="polite">
       {STEPS.map(([s, label], i) => (
         <li key={s} className="flex flex-col items-center gap-2">
           <span
