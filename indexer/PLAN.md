@@ -28,12 +28,13 @@ Only `envio dev` (a local GraphQL server) needs Docker. We don't need it until p
 - `ReputationChanged.marketId == 0` means a demo seed or an admin slash, not a market. `entryPrice == 0` with `marketId > 0` means jury duty, not a bet.
 - `ReputationChanged` carries `newR` and `pendingR`, so `Trader.r` and `Trader.pending` are set from it, never accumulated. `Vested` carries `newR`, and pending becomes 0.
 - Reputation (and bet buddies) only count in markets with ≥ $1,000 and ≥ 10 distinct bettors (`MIN_REP_POOL`, `MIN_BETTORS`).
-- `MarketResolved` never fires for voided markets. A court AMBIGUOUS verdict or a failed court emits `MarketVoided` alone.
+- `MarketResolved` never fires for voided markets. A court AMBIGUOUS verdict, a failed court or expiry emits `MarketVoided` instead.
 - `Settled.payout > 0` doesn't mean "won": refunds pay out too. Winners come from positions plus the outcome.
 - Call id = the `callId` in `CallPosted`, numbered by `Kleos` from 1. `KleosSocial.vote` uses the same number.
 - Markets are created by the team (free) or tier-V traders (bond + fee). `MarketCreated` carries the creator. `CreatorBondReleased` says whether a trader's bond was forfeited (court ruled the question AMBIGUOUS).
 - `RevenueAccrued` for the creation fee is emitted *before* `MarketCreated`, so any handler for it must not assume the market exists.
-- `resolvedBets` is not in any event. It's derived from settles in deep markets. **Open question:** seeds set it off-event (see PROGRESS.md).
+- `resolvedBets` is not in any event. It's derived from settles of positions ≥ $50 (`STAKE_REF`) in deep markets. Seeds set it off-event, so seeded traders read low.
+- `MarketExpired` follows `MarketVoided` in the same transaction. A court that fails its last round emits only `MarketVoided`.
 
 ## Phases
 
@@ -76,7 +77,7 @@ Then an integration test: process the seeded local chain and compare with contra
 - Wiring PR, announced to Daniela first: pages pick `indexer → onchain → sample`.
 
 ### Phase 6: testnet and Envio Cloud (needs Daniela)
-- Add a testnet config (chain 10143 on HyperSync, address, start block). Keep the local one for development (`ENVIO_CONFIG`).
+- `config.testnet.yaml` (chain 10143 on HyperSync, both addresses, start block). The local `config.yaml` stays for development and tests.
 - Deploy to Envio Cloud, spot-check against Monadscan, and add the README data-flow section. Close #1 and #2.
 
 ## Out of scope

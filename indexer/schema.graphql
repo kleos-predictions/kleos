@@ -192,10 +192,10 @@ type Follow {
 }
 
 # KleosSocial: one address's vote on one call. Id: callId_voter. Deleted when the vote is cleared.
-# KleosSocial doesn't check that the call exists, so a vote can name a call id not posted yet.
+# KleosSocial doesn't check that the call exists, so `call` resolves only once that id is posted.
 type CallVote {
   id: ID!
-  call: Call! @index
+  call: Call @index
   voter: Trader! @index
   value: Int! # 1 up, -1 down
 }

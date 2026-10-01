@@ -1,129 +1,109 @@
 # Deploying the indexer to Envio Cloud
 
-Official bounty page: <https://hackathon.monad.xyz/tracks/best-use-of-envio> (sign-in required). Deadline: Oct 13, 2026, 20:59 PDT. Bounties are scored 40% on adherence to the published requirements, 30% technical implementation, 20% Monad integration, 10% innovation (Rules §5.2). No hackathon-specific Envio signup, referral link or promo code exists, so a normal signup is fine. Winners get two months of Envio Cloud hosting free, then a third at 50% off (up to $5,000).
-
-Runbook for the **Best Use of Envio** bounty. BLUEPRINT §4a lists what judges need:
+Runbook for the **Best Use of Envio** bounty (<https://hackathon.monad.xyz/tracks/best-use-of-envio>, sign-in required). Deadline: Oct 13, 2026, 20:59 PDT. Judging runs Oct 13 – Nov 3, and winners are announced from Nov 4. Judges want:
 - a deployed indexer
 - a public repo with `config.yaml`, `schema.graphql` and the handlers
 - a frontend that consumes the data
 - a short demo of data flowing end to end
 
-Facts below were checked on 2026-09-29 against Envio's docs and this repo. Envio Cloud builds with pnpm 10.32; this indexer installs, codegens and passes its tests under pnpm 10.32.0. Envio Cloud ignores `pnpm-lock.yaml` and resolves dependencies on every build, which is why `package.json` pins exact versions. Monad testnet (10143) is served by HyperSync: `https://10143.hypersync.xyz/height` answers without a token, but a data query without one returns HTTP 401. The bounty deadline is Oct 13, 2026, 20:59 PDT.
+There is no hackathon offer for Envio Cloud before judging. The Metropolis sponsor perks list no Envio voucher, and Envio's prize for winners is two months of Cloud hosting, then a third at 50% off. We run on the free **Development** plan.
 
-## Who does what
+Facts below were checked on 2026-10-01 against Envio's docs, the pricing page and `envio-cloud` 1.0.0.
 
-| Step | Who | Needs |
-|---|---|---|
-| 0. Contracts on Monad testnet (done, 2026-09-30) | Daniela authorizes and signs (`AGENTS.md` rule) | Deploy wallet with testnet MON |
-| 1. Envio account and API token | Whoever owns the indexer | GitHub login |
-| 2. GitHub app on `kleos-predictions/kleos` | An owner of the `kleos-predictions` org | — |
-| 3. Testnet config | Claude | Step 0's address and deploy block |
-| 4–6. Add, configure and deploy | Indexer owner (or Claude with CLI access) | Steps 1–3 |
-| 7. Point the web app at it | Claude (config), host owner (env var) | Step 6's endpoint |
-| 8. Make the repo public | Daniela | Before submission |
+## Where things stand
 
-## 0. Contracts on Monad testnet
+| | |
+|---|---|
+| Contracts | Monad testnet (10143). Kleos `0xd68a1F212fa52663468BBB6F0456Cd6e7Ce854Cb` (block 67114811), KleosSocial `0x766d184Fc25Fe88d30cF62dC9A391cBb2975B9aA` (block 67114786) |
+| Envio org | `kleos-predictions`, Development plan |
+| Indexer | `kleos`: repo `kleos-predictions/kleos`, branch `main`, root directory `indexer`, config file `config.testnet.yaml`, auto-deploy **off** |
+| GitHub app | Envio Deployments, installed on the `kleos-predictions` org |
+| Data source | HyperSync. Hosted indexers get their own HyperSync access, so Envio Cloud needs no token or env vars |
 
-**Freeze contract events first.** Every change to an event means new handlers and a full re-index. Land any pending contract fixes before this deploy, including the `propose`/`fundFromGlobal` bounds check in `PROGRESS.md`.
+## Free plan rules that shape how we work
 
-1. Daniela deploys: `npm --prefix contracts run deploy:monad` (asks for confirmation on non-local chains).
-2. Record two values from `contracts/ignition/deployments/chain-10143/`:
-   - the `KleosModule#Kleos` address
-   - the block the Kleos contract was deployed in (the deployment journal, or the contract's creation tx on Monadscan)
-3. Seed the demo **after** the final deploy. A redeploy wipes testnet state, and each push to Envio Cloud re-indexes from the start block anyway.
+| Rule | What we do about it |
+|---|---|
+| **3 deployments per indexer at once.** Deleting one frees its slot. | Keep at most two: the one the site uses and the one being checked. Delete the rest. |
+| **Each deployment has its own GraphQL URL.** A static production URL is a paid feature. | The web app reads one server-only env var, `INDEXER_URL`. Switching deployments means changing it and redeploying the site. Nothing is rebuilt into the client. |
+| **Deployments are deleted 30 days after creation.** | A deployment made today dies on Oct 31, before judging ends. Make the final one on Oct 12 or 13, so it lives until about Nov 12. |
+| **Soft limits: 100k events, 5 GB, or 7 days without requests.** After one, 7 days normal, 3 days read-only, then deletion. | Testnet has about 250 events. The live site queries the indexer, which counts as requests. Check once a week during judging. |
+| **100 queries a minute**, across all visitors. | All queries run on the web server, one per page render, with short caching. Never one query per component, never from the browser. |
+| **Every deployment indexes from the start block.** | Cheap here: the full testnet range takes under a second through HyperSync. A new deployment is ready in minutes, mostly build time. |
+| Env vars | Not needed. Envio's pricing lists env-var management only for paid plans, so we don't depend on them. |
 
-## 1. Envio account and API token
+Paid plans start at $70 a month (Production Small: static URL, no auto-deletion, 250 queries a minute). We don't need one for the hackathon.
 
-1. Log in at <https://envio.dev/app/login> with GitHub, and pick your personal account or an org as the owner. The free development plan covers the hackathon (limits below). Envio's pricing page lists no "Developer" plan, only Development (free), Production Small, Medium and Large ($70, $300, $800 a month) and Dedicated. The Metropolis sponsor perks list no Envio voucher either, so ask Envio (Discord) how the "3 months free" hackathon offer is claimed and which plan it maps to before relying on it.
-2. Create an API token at <https://envio.dev/app/api-tokens>. HyperSync requires one, both on Envio Cloud and when testing against testnet locally.
-3. Keep the token in a password manager. Locally, put it in `indexer/.env` as `ENVIO_API_TOKEN=…`; that file is git-ignored. Never commit it.
+## Before each deployment
 
-## 2. Install the Envio Deployments GitHub app
+Run these from `indexer/`. A deployment is cheap but it changes the URL, so ship only what passes:
 
-In the Envio dashboard, install the **Envio Deployments** GitHub app and grant it access to `kleos-predictions/kleos`. Only an owner of the `kleos-predictions` organization can do this. The app works on private repos, so this doesn't have to wait for the repo to go public.
+```bash
+pnpm install && pnpm codegen && pnpm tsc --noEmit
+pnpm test               # simulated + local-chain tests
+pnpm test:testnet       # real handlers over the live testnet, compared with the contracts
+```
 
-## 3. Testnet config (done)
+`pnpm test:testnet` needs `ENVIO_API_TOKEN` in `indexer/.env` (git-ignored). Locally HyperSync needs a token; Envio Cloud doesn't.
 
-`config.yaml` stays pointed at the local chain, because the tests use it. `config.testnet.yaml` is what Envio Cloud runs:
-- the same `name`, `disable_default_cross_chain: true` and all 28 events as `config.yaml`
-- chain `10143`, read from the public Monad RPC (`for: sync`, 100 blocks per request, the RPC's `eth_getLogs` limit). HyperSync would need `ENVIO_API_TOKEN`, and Envio Cloud's free Development plan can't set environment variables ("a production feature"). Same results as HyperSync on the real range, about 200x slower: 9 minutes for the first 230k blocks. To switch back on a paid plan, remove the `rpc:` block and set the token
-- the Kleos address and start block from step 0 as literals, so the public config shows the real contract. A contract redeploy needs both changed, and a new indexer deployment.
+Envio Cloud uploads only the `indexer` folder and skips dotfiles and any folder named `generated` or `node_modules`, so `.env` never leaves the machine. It ignores `pnpm-lock.yaml`, which is why `package.json` pins exact versions.
 
-Before any deploy, check it locally against real testnet data. No Docker is needed: `createTestIndexer` can process a real testnet block range with `ENVIO_API_TOKEN` set.
+## Deploy
 
-## 4. Add the indexer
-
-Either in the dashboard (Add Indexer), or with the CLI:
+The commit has to be on GitHub first. Pushing to `main` doesn't deploy anything, because auto-deploy is off.
 
 ```bash
 npx envio-cloud login
-npx envio-cloud indexer add --name kleos --repo kleos-predictions/kleos --branch main --dry-run   # check, then run without --dry-run
+npx envio-cloud config set-org kleos-predictions        # optional: then <org> can be left out below
+npx envio-cloud indexer commits kleos kleos-predictions  # recent commits on main
+npx envio-cloud deployment deploy kleos <commit> kleos-predictions
+npx envio-cloud deployment status kleos <commit> kleos-predictions --watch-till-synced
+npx envio-cloud deployment logs kleos <commit> kleos-predictions --level error,warn
+npx envio-cloud deployment endpoint kleos <commit> kleos-predictions   # the GraphQL URL
 ```
 
-## 5. Configure it
+The dashboard's **Deploy** button on a commit does the same.
 
-| Setting | Value | Why |
-|---|---|---|
-| Root directory | `indexer` | This is a monorepo |
-| Config file | `config.testnet.yaml` | `config.yaml` is the local one |
-| Deployment branch | `main` | |
-| Automatically deploy on push | **Off** | `main` gets frequent pushes, mostly web changes. The free plan allows 3 deployments per indexer, and each one re-indexes and may change the URL, so we deploy on purpose |
-| Env vars | None | Not available on the free plan. Only needed for HyperSync |
+## Check it
 
-The config file path is relative to the root directory. Envio Cloud uploads only the root directory, and skips dotfiles and any folder named `generated` or `node_modules`, so `.env` is never uploaded.
-
-```bash
-npx envio-cloud indexer settings set kleos      # root dir, config file, branch
-```
-
-## 6. Deploy and verify
-
-```bash
-# In the dashboard: Recent Commits → pick the commit on main → deploy. (The CLI has no deploy command.)
-npx envio-cloud deployment status kleos <commit> --watch-till-synced
-npx envio-cloud deployment logs kleos <commit> --level error,warn
-npx envio-cloud deployment endpoint kleos <commit>                       # the GraphQL URL
-```
-
-Verify with one query against the endpoint, and compare the numbers with the contract or Monadscan:
+One query against the endpoint, compared with the contract (or `pnpm test:testnet`, which checks all of it):
 
 ```graphql
 query {
-  Market(order_by: { id: asc }) { id question state yesMoney noMoney bettorCount creator }
-  Trader(order_by: { r: desc }, limit: 5) { id r pending wins losses }
+  Protocol { marketCount betCount bettorCount callCount jurorCount }
+  Market(order_by: { id: asc }) { id question state voided yesMoney noMoney bettorCount sharpYes sharpNo }
+  Trader(order_by: { r: desc }, limit: 5) { id name r pending wins losses isJuror }
 }
 ```
 
-The API is Hasura-style: `Entity(where:, order_by:, limit:, offset:)`, and BigInt comes back as a string. Rows are keyed by `(id, chainId)` because the config sets `disable_default_cross_chain`, so look single rows up with `where: { id: { _eq: … } }`.
+The API is Hasura-style: `Entity(where:, order_by:, limit:, offset:)`. BigInt comes back as a string and there are no `_aggregate` queries, so totals live on `Protocol` and on each entity. Rows are keyed by `(id, chainId)` because the config sets `disable_default_cross_chain`, so look single rows up with `where: { id: { _eq: … } }`.
 
-## 7. Point the web app at it
+## Switch the site to it
 
-Set `INDEXER_URL` (server-only) to the endpoint in the host's environment (Vercel or wherever the site runs), then redeploy the site. Pages read indexer → RPC → sample data, so nothing breaks while it's unset.
+1. Set `INDEXER_URL` to the new endpoint in the web host's environment. It is server-only: never `NEXT_PUBLIC_`.
+2. Redeploy the site and open a market, a profile and the leaderboard.
+3. Delete the old deployment: `npx envio-cloud deployment delete kleos <old-commit> kleos-predictions --yes`.
 
-**Static URL: unclear on the free plan.** Envio's features page says every indexer gets a static production endpoint that you point at a deployment with "Promote to Production" (`npx envio-cloud deployment promote`). The pricing page lists it only on paid plans. Once the account exists, try `deployment promote` on the free plan and ask in the Envio Discord.
+Pages read indexer → RPC → sample data, so nothing breaks while `INDEXER_URL` is unset or wrong.
 
-Either way the URL only changes when a new deployment is pushed, so deploy rarely: once after the final contracts, plus fixes. The web app keeps the endpoint in one **server-only** env var (`INDEXER_URL`, not `NEXT_PUBLIC_`): all indexer queries run on the server with short caching, which also keeps us under the free plan's 100 queries a minute. After a new deployment, update that one variable and redeploy the site. If a fixed URL matters for judging, Production Small ($70/month) adds one, plus no auto-deletion.
+## Schedule
 
-## 8. Before submitting
+| When | Deployment |
+|---|---|
+| Now | First deployment, for building `web/src/lib/indexer.ts` (#3) against real data |
+| As needed | One per indexer change worth showing. Delete the previous one |
+| Oct 12–13 | The final one, after the last indexer change. It is the one judges see, and it lives until about Nov 12 |
+| Weekly until Nov 4 | `deployment status`, and a page load on the live site |
 
-- [ ] Repo public (Envio requires it): `config.yaml`, `config.testnet.yaml`, `schema.graphql`, `src/handlers/`, plus `ARCHITECTURE.md` for the judges
-- [ ] The live site reads from the indexer (item 7)
-- [ ] The demo video shows data flowing end to end. For example: place a bet, then the market and profile update from the indexer, then the same row on Monadscan. Envio's dashboard showing the synced indexer is a useful shot too.
+## If the contracts are redeployed
+
+1. Update both addresses and the start block (the earlier of the two deploy blocks) in `config.testnet.yaml`.
+2. Reseed the demo, run `pnpm test:testnet`, commit and push.
+3. Deploy that commit, switch the site, delete the old deployment.
+
+## Before submitting
+
+- [ ] Repo public: `config.yaml`, `config.testnet.yaml`, `schema.graphql`, `src/handlers/`, `ARCHITECTURE.md`
+- [ ] The live site reads from the indexer
+- [ ] Demo video: place a bet, then the market, profile and leaderboard update from the indexer, then the same transaction on Monadscan. The Envio dashboard showing the synced indexer is a useful shot too.
 - [ ] README section: chain → Envio → UI
-
-## Free plan limits that matter here
-
-- **3 indexers per org, 3 deployments per indexer.** Delete old deployments (`npx envio-cloud deployment delete kleos <commit> --yes`) before pushing a fourth.
-- **Every push re-indexes from the start block.** The previous deployment keeps serving until the new one syncs, but under its own URL (see step 7).
-- **Query rate 100 a minute, about 100k events stored, 750 indexing hours** (pricing page). Production Small raises these to 250 a minute and about 1M events, and adds a static endpoint, backups and no auto-deletion.
-- **Automatic deletion:**
-  - hard limits: over 20 GB of storage, or 30 days old
-  - soft limits, whichever comes first: 100k events, 5 GB of storage, or 7 days without requests. After a soft limit: 7 days' grace, then 3 days read-only, then deletion
-
-  Judging may run until after the Oct 13 deadline, so keep the live site querying the indexer, and redeploy if it gets close to 30 days old.
-
-## If contracts are redeployed
-
-1. Update the address and start block: the env vars on Envio Cloud, or the literals in `config.testnet.yaml`.
-2. Commit to `main`, then deploy that commit from **Recent Commits**. That's a new deployment, so mind the limit of 3.
-3. Reseed the demo.
