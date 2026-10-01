@@ -79,6 +79,18 @@ npm run deploy:local && npm run seed:local && npm run court-bot
 
 `deploy:local` writes the addresses into `web/.env.local`. On Monad testnet, set `ENVIO_API_TOKEN` in the web server's env: event reads go through Envio HyperSync, since the public RPC serves logs 100 blocks at a time. Set `KLEOS_ME=0x…` before `seed:local` to give your passkey account demo reputation, and use `npm run dispute` to send a proposal to the court.
 
+## Data flow
+
+```
+Kleos.sol, KleosSocial.sol (Monad testnet)
+  → events
+  → Envio HyperIndex on Envio Cloud (indexer/, reads the chain through HyperSync)
+  → GraphQL, queried only by the web server (web/src/lib/indexer.ts, cached 10 s)
+  → pages
+```
+
+Markets, prices, recent bets, the sharp signal, calls, the feed, the leaderboard and reputation history come from the indexer. Balances, the trade panel and the account's own reputation are read from the contracts, because they must be exact at the moment of an action. Set the server-only `INDEXER_URL` to the deployment's GraphQL endpoint (`indexer/DEPLOY.md`). Without it, or if the indexer fails, pages read the chain directly, and with no contract addresses they show sample data.
+
 ## Known limitations
 
 - **Jury bribery.** Disputes go to the Kleos Court, where votes stay hidden until the reveal, but a juror can prove their vote afterward, so open bribes are possible. Random draws and reputation at stake make it costly, not impossible. Jury draws use block randomness, which block producers can nudge.

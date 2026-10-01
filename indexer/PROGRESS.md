@@ -54,9 +54,12 @@ Daniela's `seed-demo.ts` on `main` (commit `3a8d383`) now resolves and settles a
 
 ### Phase 5: web
 - Note: the free Envio plan allows 100 queries a minute across all visitors. `indexer.ts` makes one GraphQL request per page and caches it briefly (Next `revalidate`), never one query per component.
-- [ ] `web/src/lib/indexer.ts`
+- [x] `web/src/lib/indexer.ts` (2026-10-01): one GraphQL query per read, `fetch` with `next.revalidate` 10 s, server-only. Pages use `preferIndexer(indexer, chain)`, which falls back to `onchain.ts` and logs why. Skipped in demo mode and on the local chain (the deployment serves testnet)
+- [x] Wired: `/markets` and market pages past the samples, market calls, recent bets (indexer only), the feed, profiles (history, wins, losses, name; R, pending, resolvedBets and the flag stay on the contract) and the leaderboard (indexer only; samples otherwise)
+- [x] Checked against the deployment with a testnet dev server: every page 200, indexed data on each (20 leaderboard rows, market 7's 3 sharps and real bets, feed, profile history). With a broken `INDEXER_URL` the fallback fires; the chain readers are then slow without `ENVIO_API_TOKEN`
+- [x] README: data flow section
 - [ ] `court-panel.tsx`, `bet-buddies.tsx`
-- [ ] Wiring PR (announce to Daniela first)
+- [ ] Announce the wiring to Daniela (pages changed: markets, market, feed, profile, leaderboard)
 
 ### Phase 6: testnet + Envio Cloud (needs Daniela)
 - [x] Runbook: `DEPLOY.md` (checked against Envio docs; the indexer builds under Envio Cloud's pnpm 10.32)
