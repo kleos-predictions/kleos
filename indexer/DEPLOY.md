@@ -14,9 +14,9 @@ Facts below were checked on 2026-09-29 against Envio's docs and this repo. Envio
 
 | Step | Who | Needs |
 |---|---|---|
-| 0. Contracts on Monad testnet | Daniela authorizes and signs (`AGENTS.md` rule) | Deploy wallet with testnet MON |
+| 0. Contracts on Monad testnet (done, 2026-09-30) | Daniela authorizes and signs (`AGENTS.md` rule) | Deploy wallet with testnet MON |
 | 1. Envio account and API token | Whoever owns the indexer | GitHub login |
-| 2. GitHub app on `danimim/kleos` | Daniela (repo owner) | — |
+| 2. GitHub app on `kleos-predictions/kleos` | An owner of the `kleos-predictions` org | — |
 | 3. Testnet config | Claude | Step 0's address and deploy block |
 | 4–6. Add, configure and deploy | Indexer owner (or Claude with CLI access) | Steps 1–3 |
 | 7. Point the web app at it | Claude (config), host owner (env var) | Step 6's endpoint |
@@ -40,7 +40,7 @@ Facts below were checked on 2026-09-29 against Envio's docs and this repo. Envio
 
 ## 2. Install the Envio Deployments GitHub app
 
-In the Envio dashboard, install the **Envio Deployments** GitHub app and grant it access to `danimim/kleos`. Only the repo owner can do this. The app works on private repos, so this doesn't have to wait for the repo to go public.
+In the Envio dashboard, install the **Envio Deployments** GitHub app and grant it access to `kleos-predictions/kleos`. Only an owner of the `kleos-predictions` organization can do this. The app works on private repos, so this doesn't have to wait for the repo to go public.
 
 ## 3. Testnet config (done, waiting on step 0)
 
@@ -67,7 +67,7 @@ Either in the dashboard (Add Indexer), or with the CLI:
 
 ```bash
 npx envio-cloud login
-npx envio-cloud indexer add --name kleos --repo danimim/kleos --branch main --dry-run   # check, then run without --dry-run
+npx envio-cloud indexer add --name kleos --repo kleos-predictions/kleos --branch main --dry-run   # check, then run without --dry-run
 ```
 
 ## 5. Configure it

@@ -62,9 +62,12 @@ Daniela's `seed-demo.ts` on `main` (commit `3a8d383`) now resolves and settles a
 - [x] Checked (2026-09-29): HyperSync 10143 answers `/height` without a token, data queries return 401 without one. `envio-cloud` CLI runs, no session yet. Not logged in to envio.dev in the browser.
 - [x] Envio account and API token in `indexer/.env` (2026-09-29). Token verified: an authorized HyperSync query on 10143 returns 200 (401 without it).
 - [x] Testnet smoke test (2026-09-29): with `config.testnet.yaml`, the real handlers processed the latest 200 Monad testnet blocks through HyperSync (placeholder address, 0 events as expected). It caught an unquoted `${ENVIO_KLEOS_ADDRESS}` that YAML can read as a number; now quoted.
-- [ ] Daniela: install the Envio GitHub app on `danimim/kleos` (DEPLOY.md step 2)
+- [x] Repo moved to the `kleos-predictions` org (2026-10-01): `kleos-predictions/kleos` is a new repo, and `danimim/kleos` is no longer used. Local remotes point at the org.
+- [ ] Install the Envio GitHub app on `kleos-predictions/kleos` (DEPLOY.md step 2)
 - [ ] Ask Envio how the hackathon's "3 months free" offer is claimed (no "Developer" plan on the pricing page, no Envio voucher in the Metropolis perks)
-- [ ] After step 0: set the address and start block, then test a real testnet block range locally
+- [x] Contracts on Monad testnet (Daniela, 2026-09-30): Kleos `0xd68a1F212fa52663468BBB6F0456Cd6e7Ce854Cb`, deployed in block 67114811. Deployed bytecode of all three contracts matches the source on `main`.
+- [x] Real testnet range tested locally (2026-10-01): with `config.testnet.yaml` and the values above, the handlers indexed blocks 67114811–67345206: 8 markets (matches `marketCount`), 33 bets, 14 calls, 20 traders, 27 reputation changes. Bettor counts and both prices match the contract for every market.
+- [ ] Write the address and start block into `config.testnet.yaml` as literals
 - [ ] Cloud deploy, README data flow, close #1 and #2
 
 ## Decisions
