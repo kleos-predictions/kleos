@@ -27,8 +27,8 @@ flowchart LR
   end
 
   subgraph web["web/"]
-    client["src/lib/indexer.ts (#3)"]
-    onchain["src/lib/onchain.ts<br/>RPC reads (today)"]
+    client["src/lib/indexer.ts<br/>one GraphQL query per page"]
+    onchain["src/lib/onchain.ts<br/>contract reads"]
     sample["src/lib/data.ts<br/>sample data (demo mode)"]
     pages["Pages<br/>markets · market · feed · profile · leaderboard"]
   end
@@ -41,8 +41,8 @@ flowchart LR
   testnet --> handlers
   handlers --> store
   planned -.-> store
-  store -.-> cloud -.-> client
-  client -.->|"1st choice"| pages
+  store --> cloud --> client
+  client -->|"1st choice"| pages
   onchain -->|"fallback"| pages
   sample -->|"no chain configured"| pages
 ```
