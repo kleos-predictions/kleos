@@ -6,6 +6,7 @@ import { explainChange, multiplier, PARAMS } from "@/lib/math";
 import { tierOf, TIER_NAMES } from "@/lib/tiers";
 import { IS_LIVE, IS_LOCAL_CHAIN, addressUrl, shortAddress, txUrl } from "@/lib/chain";
 import { readFeed, readProfile } from "@/lib/onchain";
+import * as indexer from "@/lib/indexer";
 import { FeedList } from "@/components/feed-list";
 import { LaurelBadge } from "@/components/laurel";
 import { DotNumber } from "@/components/dot-number";
@@ -29,7 +30,7 @@ const EMPTY: View = { r: 0, pending: 0, resolvedBets: 0, flagged: false, wins: 0
 async function load(address: Address): Promise<View> {
   if (IS_LIVE) {
     try {
-      return await readProfile(address);
+      return await indexer.preferIndexer(() => indexer.readProfile(address), () => readProfile(address));
     } catch {
       return EMPTY; // chain unreachable: show an honest empty state instead of crashing
     }
@@ -43,7 +44,9 @@ export default async function ProfilePage(props: PageProps<"/profile/[address]">
   if (!isAddress(address)) notFound();
 
   const v = await load(address);
-  const calls: FeedItem[] = IS_LIVE ? await readFeed(50, address).catch(() => []) : sampleFeed(address);
+  const calls: FeedItem[] = IS_LIVE
+    ? await indexer.preferIndexer(() => indexer.readFeed(50, address), () => readFeed(50, address)).catch(() => [])
+    : sampleFeed(address);
   const tier = tierOf(v.r);
   const activated = v.resolvedBets >= PARAMS.nMin;
   const mult = activated ? multiplier(v.r) : 1;

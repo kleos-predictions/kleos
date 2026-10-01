@@ -1,9 +1,10 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { Suspense } from "react";
-import { getMarket, recentBets, sampleCalls, MARKETS, type Call } from "@/lib/data";
+import { getMarket, recentBets, sampleCalls, MARKETS, type Bet, type Call } from "@/lib/data";
 import { IS_LIVE, shortAddress } from "@/lib/chain";
 import { readCalls, readLiveMarket } from "@/lib/onchain";
+import * as indexer from "@/lib/indexer";
 import { CallsList } from "@/components/calls-list";
 import { ResolutionPanel } from "@/components/resolution-panel";
 import { OddsDisplay } from "@/components/odds-display";
@@ -16,11 +17,15 @@ import { SharpSignal } from "@/components/sharp-signal";
 
 export default async function MarketPage(props: PageProps<"/market/[id]">) {
   const { id } = await props.params;
-  const market = getMarket(Number(id)) ?? (IS_LIVE ? await readLiveMarket(Number(id)).catch(() => null) : null);
+  const n = Number(id);
+  const market =
+    getMarket(n) ?? (IS_LIVE ? await indexer.preferIndexer(() => indexer.readLiveMarket(n), () => readLiveMarket(n)).catch(() => null) : null);
   if (!market) notFound();
-  const bets = recentBets(market.id);
+  // Recent bets exist only in the indexer (the chain keeps positions, not a bet list).
+  let bets: Bet[] = recentBets(market.id);
+  if (indexer.HAS_INDEXER) bets = await indexer.readRecentBets(market.id).catch(() => bets);
   let calls: Call[] = sampleCalls(market.id);
-  if (IS_LIVE) calls = await readCalls(market.id).catch(() => []);
+  if (IS_LIVE) calls = await indexer.preferIndexer(() => indexer.readCalls(market.id), () => readCalls(market.id)).catch(() => []);
   const index = MARKETS.indexOf(market);
 
   return (

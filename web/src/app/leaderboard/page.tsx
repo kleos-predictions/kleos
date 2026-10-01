@@ -1,12 +1,19 @@
 import Link from "next/link";
-import { TRADERS } from "@/lib/data";
+import { connection } from "next/server";
+import { TRADERS, type Trader } from "@/lib/data";
 import { multiplier } from "@/lib/math";
 import { tierOf, TIER_NAMES } from "@/lib/tiers";
-import { shortAddress } from "@/lib/chain";
+import { IS_LIVE, shortAddress } from "@/lib/chain";
+import * as indexer from "@/lib/indexer";
 import { LaurelBadge } from "@/components/laurel";
 import { DotNumber } from "@/components/dot-number";
 
-export default function LeaderboardPage() {
+export default async function LeaderboardPage() {
+  // Live traders come only from the indexer: ranking them needs every trader, which the chain can't list.
+  // Rendered per request when live, so INDEXER_URL can be set at runtime, not only at build time.
+  if (IS_LIVE) await connection();
+  let traders: Trader[] = TRADERS;
+  if (indexer.HAS_INDEXER) traders = await indexer.readLeaderboard().catch(() => TRADERS);
   return (
     <main className="mx-auto flex w-full max-w-[1440px] flex-1 flex-col gap-7 px-4 pt-10 pb-12 md:px-12">
       <h1 className="font-dot text-[30px] leading-[1.08] font-black md:text-[46px]">
@@ -25,7 +32,7 @@ export default function LeaderboardPage() {
             </tr>
           </thead>
           <tbody className="divide-y divide-line">
-            {TRADERS.map((t, i) => (
+            {traders.map((t, i) => (
               <tr key={t.address}>
                 <td className="px-4 py-4 font-dot text-2xl font-black text-muted">{String(i + 1).padStart(2, "0")}</td>
                 <td className="px-4 py-4">
