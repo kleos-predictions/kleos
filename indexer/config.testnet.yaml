@@ -1,13 +1,19 @@
 # yaml-language-server: $schema=./node_modules/envio/evm.schema.json
 name: kleos-indexer
 disable_default_cross_chain: true
-# Monad testnet, served by HyperSync (no rpc: entry). Envio Cloud runs this file.
+# Monad testnet. Envio Cloud runs this file.
 # Kleos as deployed on 2026-09-30 (contracts/ignition/deployments/chain-10143). A redeploy of
-# the contracts needs both values changed. ENVIO_API_TOKEN comes from the environment
-# (Envio Cloud: the indexer's Environment Variables tab).
+# the contracts needs both values changed.
 chains:
 - id: 10143
   start_block: 67114811
+  # Read from the public RPC, not HyperSync: HyperSync needs ENVIO_API_TOKEN, and Envio Cloud's
+  # free plan can't set env vars. The RPC serves eth_getLogs 100 blocks at a time.
+  rpc:
+  - url: https://testnet-rpc.monad.xyz
+    for: sync
+    initial_block_interval: 100
+    interval_ceiling: 100
   contracts:
   - name: Kleos
     address:
