@@ -17,10 +17,11 @@ Every bet on Kleos weighs **money × reputation**. Reputation (R) only grows whe
 
 | Area | State |
 |---|---|
-| Contracts (`contracts/`) | ✅ v2: payout v2, safeguards, evidence fields; 22 tests passing; Ignition deploy module |
+| Contracts (`contracts/`) | ✅ v2: payout v2, safeguards, evidence fields, Kleos Court, KleosSocial; 48 tests passing; Ignition deploy module |
 | Frontend (`web/`) | ✅ Markets, market page, profile, leaderboard, How it works (interactive formulas), sharp signal |
-| On-chain wiring | 🟡 Wallet, faucet and bet go on-chain when `.env` is set; reads still use demo data |
-| Monad testnet deploy | ⬜ Needs the user's key; **only with explicit authorization** |
+| On-chain wiring | ✅ Passkey accounts, sponsored funding and every action go on-chain. Lists and history read from the Envio indexer, with the contracts as fallback; samples only in demo mode |
+| Monad testnet deploy | ✅ Deployed Sep 30 (`contracts/ignition/deployments/chain-10143`); further testnet actions **only with explicit authorization** |
+| Envio indexer | ✅ On Envio Cloud's free plan, synced through HyperSync (`indexer/DEPLOY.md`) |
 
 ---
 
@@ -152,6 +153,8 @@ The indexer turns contract events into the queries the app needs, so reputation 
 | `Trader` (R, pending, resolved bets, flagged) | ReputationChanged, Vested, Flagged, FlagCleared, Slashed | Leaderboard, profile, laurel badges |
 | `ReputationChange` (delta, entry price, tx hash) | ReputationChanged | Profile history with the math and Monadscan links |
 | `SharpSignal` per market | BetPlaced joined with Trader R ≥ 16 | "X of Y sharps bet YES" |
+
+Built as planned, with one change: the sharp signal lives on `Market` (`sharpYes`, `sharpNo`) and on each `Bet` (`traderR`, `sharp`) instead of a separate entity, so one query serves the market page. Court, social and protocol totals are indexed too (`indexer/ARCHITECTURE.md`).
 
 Docker is not installed locally, so the indexer runs on Envio Cloud.
 
