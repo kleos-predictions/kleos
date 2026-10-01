@@ -6,7 +6,8 @@
     "codegen": "envio codegen",
     "dev": "envio dev",
     "start": "envio start",
-    "test": "vitest run --test-timeout=20000"
+    "test": "vitest run --test-timeout=20000",
+    "test:testnet": "scripts/test-testnet.sh"
   },
   "devDependencies": {
     "@types/node": "24.12.2",

@@ -125,8 +125,8 @@ describe("markets", () => {
 });
 
 describe("robustness", () => {
-  // Kleos.propose and fundFromGlobal don't check that the market exists: an id that was never
-  // created reads as Open with closeTime 0. Those events must not halt the indexer.
+  // The contract rejects market events for ids that were never created, but if one ever arrived
+  // it must not halt the indexer.
   it("skips events for markets that were never created and keeps indexing", async (t) => {
     const indexer = createTestIndexer();
     const ghost = 99n;
@@ -152,7 +152,7 @@ describe("reputation", () => {
       categoryAdded(), marketCreated(),
       reputationChanged({ user: alice, marketId: 0n, delta: wad(16), newR: wad(16), n: 3 }),
       betPlaced({ user: alice, side: true, amount: usd(50), n: 4 }),
-      // A bet into an empty side enters at price 0, like jury duty: the position is what tells them apart.
+      // Same entryPrice as jury duty on purpose: the position is what tells them apart.
       reputationChanged({ user: alice, marketId: 1n, delta: wad(0.7), newR: wad(16), pendingR: wad(0.7), entryPrice: 0n, side: true, outcome: true, n: 5 }),
       reputationChanged({ user: bob, marketId: 1n, delta: -wad(0.3), newR: wad(39.7), n: 6 }),
     ]);
@@ -221,5 +221,234 @@ describe("reputation", () => {
     ]);
     t.expect((await indexer.Trader.getOrThrow(me.toLowerCase())).resolvedBets).toBe(1);
     t.expect(await indexer.Position.getOrThrow(positionId(1n, me))).toMatchObject({ settled: true, payout: usd(196) });
+  });
+
+  it("a settle counts toward activation only for a position of at least $50, both sides together", async (t) => {
+    const crowd = Array.from({ length: 10 }, (_, i) => addr(200 + i));
+    const [small, hedged, full] = [crowd[0]!, crowd[1]!, crowd[2]!];
+    const indexer = createTestIndexer();
+    await run(indexer, [
+      categoryAdded(), marketCreated(),
+      betPlaced({ user: small, side: true, amount: usd(49.99), n: 3 }),
+      betPlaced({ user: hedged, side: true, amount: usd(30), n: 4 }),
+      betPlaced({ user: hedged, side: false, amount: usd(20), n: 5 }),
+      betPlaced({ user: full, side: false, amount: usd(50), n: 6 }),
+      ...crowd.slice(3).map((u, i) => betPlaced({ user: u, side: i % 2 === 0, amount: usd(150), n: 10 + i })),
+      marketResolved(true, 30),
+      settled(small, 31, 0), settled(hedged, 31, 1), settled(full, 31, 2),
+    ]);
+    const counted = async (a: string) => (await indexer.Trader.getOrThrow(a.toLowerCase())).resolvedBets;
+    t.expect([await counted(small), await counted(hedged), await counted(full)]).toEqual([0, 1, 1]);
+  });
+
+  it("an admin slash is recorded on the trader, and its ReputationChanged sets R", async (t) => {
+    const indexer = createTestIndexer();
+    await run(indexer, [
+      reputationChanged({ user: alice, marketId: 0n, delta: wad(20), newR: wad(20), n: 1 }),
+      { contract: "Kleos", event: "Slashed", block: { number: 2 }, logIndex: 0, params: { user: alice, amount: wad(5) } },
+      reputationChanged({ user: alice, marketId: 0n, delta: -wad(5), newR: wad(15), n: 2, logIndex: 1 }),
+    ]);
+    t.expect(await indexer.Trader.getOrThrow(alice.toLowerCase())).toMatchObject({ r: wad(15), slashed: wad(5) });
+  });
+});
+
+describe("sharp signal", () => {
+  it("counts each trader with R ≥ 16 at bet time once per side", async (t) => {
+    const indexer = createTestIndexer();
+    await run(indexer, [
+      categoryAdded(), marketCreated(),
+      reputationChanged({ user: alice, marketId: 0n, delta: wad(16), newR: wad(16), n: 3 }),
+      reputationChanged({ user: bob, marketId: 0n, delta: wad(15.9), newR: wad(15.9), n: 3, logIndex: 1 }),
+      betPlaced({ user: alice, side: true, amount: usd(10), n: 4 }),
+      betPlaced({ user: alice, side: true, amount: usd(10), n: 5 }),
+      betPlaced({ user: alice, side: false, amount: usd(10), n: 6 }),
+      betPlaced({ user: bob, side: true, amount: usd(10), n: 7 }),
+      // Carol becomes sharp only after her first bet: that one doesn't count, the next does.
+      betPlaced({ user: carol, side: false, amount: usd(10), n: 8 }),
+      reputationChanged({ user: carol, marketId: 0n, delta: wad(40), newR: wad(40), n: 9 }),
+      betPlaced({ user: carol, side: false, amount: usd(10), n: 10 }),
+    ]);
+    t.expect(await indexer.Market.getOrThrow("1")).toMatchObject({ sharpYes: 1, sharpNo: 2 });
+    const bets = (await indexer.Bet.getAll()).sort((a, b) => a.timestamp - b.timestamp);
+    t.expect(bets.map((b) => [b.traderR, b.sharp])).toEqual([
+      [wad(16), true], [wad(16), true], [wad(16), true], [wad(15.9), false], [0n, false], [wad(40), true],
+    ]);
+  });
+});
+
+describe("lifecycle edges", () => {
+  it("an expired market is voided, flagged as expired, and its calls refunded", async (t) => {
+    const hash = tx("exp");
+    const indexer = createTestIndexer();
+    await run(indexer, [
+      categoryAdded(), marketCreated(),
+      betPlaced({ user: alice, side: true, amount: usd(10), n: 3, hash }),
+      callPosted({ callId: 1n, user: alice, side: true, text: "Soon", n: 3, logIndex: 1, hash }),
+      marketVoided(9),
+      { contract: "Kleos", event: "MarketExpired", block: { number: 9 }, logIndex: 1, params: { marketId: 1n } },
+    ]);
+    t.expect(await indexer.Market.getOrThrow("1")).toMatchObject({ state: "Resolved", voided: true, expired: true, outcome: undefined });
+    t.expect((await indexer.Call.getOrThrow("1")).result).toBe("Refunded");
+  });
+
+  it("a rolled-over bonus is recorded on the market", async (t) => {
+    const indexer = createTestIndexer();
+    await run(indexer, [
+      categoryAdded(), marketCreated(),
+      { contract: "Kleos", event: "BonusRolledOver", block: { number: 5 }, params: { marketId: 1n, amount: usd(7) } },
+      { contract: "Kleos", event: "BonusOpened", block: { number: 5 }, logIndex: 1, params: { marketId: 1n, bonusPool: 0n, totalWeight: 0n } },
+    ]);
+    t.expect(await indexer.Market.getOrThrow("1")).toMatchObject({ rolledOver: usd(7), bonusPool: 0n, bonusOpen: true });
+  });
+});
+
+describe("Kleos Court", () => {
+  const jurors = Array.from({ length: 6 }, (_, i) => addr(300 + i));
+  const pool = (n: number, event: "JurorJoined" | "JurorLeft" | "JurorPruned", juror: `0x${string}`, logIndex = 0) =>
+    ({ contract: "Kleos", event, block: { number: n }, logIndex, params: { juror } }) as const;
+  const drawn = (marketId: bigint, round: number, seats: `0x${string}`[], n: number) =>
+    ({ contract: "Kleos", event: "JuryDrawn", block: { number: n, timestamp: n * 10 }, params: { marketId, round: BigInt(round), jurors: seats } }) as const;
+  const committed = (marketId: bigint, round: number, juror: `0x${string}`, n: number, logIndex = 0) =>
+    ({ contract: "Kleos", event: "VoteCommitted", block: { number: n }, logIndex, params: { marketId, round: BigInt(round), juror } }) as const;
+  const revealed = (marketId: bigint, round: number, juror: `0x${string}`, vote: number, n: number, logIndex = 0) =>
+    ({ contract: "Kleos", event: "VoteRevealed", block: { number: n }, logIndex, params: { marketId, round: BigInt(round), juror, vote: BigInt(vote) } }) as const;
+  const disputed = (marketId: bigint, n: number) => [
+    { contract: "Kleos", event: "OutcomeProposed", block: { number: n, timestamp: n }, params: { marketId, proposer: alice, outcome: true, evidenceHash: tx("e"), evidenceURI: "" } },
+    { contract: "Kleos", event: "OutcomeDisputed", block: { number: n + 1 }, params: { marketId, disputer: bob } },
+  ];
+
+  it("tracks the juror pool through joins, leaves and prunes", async (t) => {
+    const indexer = createTestIndexer();
+    await run(indexer, [
+      ...jurors.map((j, i) => pool(1, "JurorJoined", j, i)),
+      pool(2, "JurorLeft", jurors[0]!),
+      pool(3, "JurorPruned", jurors[1]!),
+    ]);
+    t.expect((await indexer.Protocol.getOrThrow("kleos")).jurorCount).toBe(4);
+    t.expect((await indexer.Trader.getOrThrow(jurors[0]!.toLowerCase())).isJuror).toBe(false);
+    t.expect((await indexer.Trader.getOrThrow(jurors[1]!.toLowerCase())).isJuror).toBe(false);
+    t.expect((await indexer.Trader.getOrThrow(jurors[2]!.toLowerCase())).isJuror).toBe(true);
+  });
+
+  it("a round without a verdict is redrawn; an AMBIGUOUS verdict voids the market", async (t) => {
+    const [r1, r2] = [jurors.slice(0, 5), jurors.slice(1, 6)];
+    const indexer = createTestIndexer();
+    await run(indexer, [
+      categoryAdded(), marketCreated(),
+      ...disputed(1n, 3),
+      drawn(1n, 1, r1, 4),
+      committed(1n, 1, r1[0]!, 5), committed(1n, 1, r1[0]!, 5, 1), // re-commit: still one commit
+      committed(1n, 1, r1[1]!, 6), committed(1n, 1, r1[2]!, 6, 1),
+      revealed(1n, 1, r1[0]!, 1, 7), revealed(1n, 1, r1[1]!, 1, 7, 1), revealed(1n, 1, r1[2]!, 2, 7, 2),
+      { contract: "Kleos", event: "CourtRedrawn", block: { number: 8 }, params: { marketId: 1n, failedRound: 1n } },
+      drawn(1n, 2, r2, 8),
+      ...r2.slice(0, 3).map((j, i) => committed(1n, 2, j, 9, i)),
+      ...r2.slice(0, 3).map((j, i) => revealed(1n, 2, j, 3, 10, i)),
+      { contract: "Kleos", event: "Verdict", block: { number: 11 }, params: { marketId: 1n, round: 2n, vote: 3n } },
+      marketVoided(11),
+    ]);
+
+    t.expect(await indexer.CourtRound.getOrThrow("1_1")).toMatchObject({ round: 1, commits: 3, reveals: 3, yes: 2, no: 1, ambiguous: 0, failed: true, verdict: undefined, drawnAt: 40 });
+    t.expect(await indexer.CourtRound.getOrThrow("1_2")).toMatchObject({ commits: 3, reveals: 3, ambiguous: 3, failed: false, verdict: 3 });
+    t.expect((await indexer.CourtRound.getOrThrow("1_1")).jurors).toEqual(r1.map((j) => j.toLowerCase()));
+    t.expect(await indexer.Market.getOrThrow("1")).toMatchObject({ courtRound: 2, verdict: 3, voided: true, state: "Resolved" });
+    // Seats exist from the draw, so no-shows are visible.
+    t.expect(await indexer.JurorVote.getOrThrow(`1_1_${r1[4]!.toLowerCase()}`)).toMatchObject({ committed: false, vote: 0 });
+    t.expect(await indexer.JurorVote.getOrThrow(`1_2_${r2[0]!.toLowerCase()}`)).toMatchObject({ committed: true, vote: 3 });
+    // Jurors 2–5 sat in both rounds.
+    t.expect((await indexer.Trader.getOrThrow(jurors[1]!.toLowerCase())).juryDuties).toBe(2);
+  });
+
+  it("a YES/NO verdict resolves the market; a last round without one fails the court", async (t) => {
+    const seats = jurors.slice(0, 5);
+    const indexer = createTestIndexer();
+    await run(indexer, [
+      categoryAdded(), marketCreated(1n, 2), marketCreated(2n, 2),
+      ...disputed(1n, 3), drawn(1n, 1, seats, 5),
+      ...seats.slice(0, 3).map((j, i) => revealed(1n, 1, j, 2, 6, i)),
+      { contract: "Kleos", event: "Verdict", block: { number: 7 }, params: { marketId: 1n, round: 1n, vote: 2n } },
+      marketResolved(false, 7, 0n, 1n),
+      ...disputed(2n, 10), drawn(2n, 1, seats, 12),
+      { contract: "Kleos", event: "CourtRedrawn", block: { number: 13 }, params: { marketId: 2n, failedRound: 1n } },
+      drawn(2n, 2, seats, 13),
+      marketVoided(14, 2n), // round 2 closed without a verdict
+    ]);
+    t.expect(await indexer.Market.getOrThrow("1")).toMatchObject({ verdict: 2, outcome: false, voided: false });
+    t.expect((await indexer.CourtRound.getOrThrow("1_1")).failed).toBe(false);
+    t.expect(await indexer.Market.getOrThrow("2")).toMatchObject({ verdict: undefined, voided: true, courtRound: 2 });
+    t.expect((await indexer.CourtRound.getOrThrow("2_2")).failed).toBe(true);
+  });
+});
+
+describe("protocol totals", () => {
+  it("counts markets, bets, bettors, volume, calls and revenue", async (t) => {
+    const hash = tx("c");
+    const indexer = createTestIndexer();
+    await run(indexer, [
+      categoryAdded(),
+      // A trader-created market: the creation fee accrues before MarketCreated.
+      { contract: "Kleos", event: "RevenueAccrued", block: { number: 2 }, params: { marketId: 1n, amount: usd(2) } },
+      marketCreated(1n, 2, bob),
+      marketCreated(2n, 3),
+      betPlaced({ user: alice, side: true, amount: usd(10), n: 4, hash }),
+      callPosted({ callId: 1n, user: alice, side: true, text: "Up", n: 4, logIndex: 1, hash }),
+      betPlaced({ user: alice, side: false, amount: usd(5), n: 5, marketId: 2n }),
+      betPlaced({ user: carol, side: false, amount: usd(20), n: 6 }),
+      { contract: "Kleos", event: "RevenueAccrued", block: { number: 7 }, params: { marketId: 1n, amount: usd(0.1) } },
+      { contract: "Kleos", event: "RevenueWithdrawn", block: { number: 8 }, params: { to: TEAM, amount: usd(2.1) } },
+    ]);
+    t.expect(await indexer.Protocol.getOrThrow("kleos")).toMatchObject({
+      marketCount: 2, betCount: 3, bettorCount: 2, volume: usd(35), callCount: 1, revenueAccrued: usd(2.1), revenueWithdrawn: usd(2.1),
+    });
+  });
+});
+
+describe("social", () => {
+  const social = <E extends "NameSet" | "Followed" | "Unfollowed" | "CallVoted">(event: E, n: number, params: Record<string, unknown>, logIndex = 0) =>
+    ({ contract: "KleosSocial", event, block: { number: n, timestamp: n }, logIndex, params }) as const;
+
+  it("usernames: the latest one wins", async (t) => {
+    const indexer = createTestIndexer();
+    await run(indexer, [social("NameSet", 1, { user: alice, name: "alice" }), social("NameSet", 2, { user: alice, name: "alice_2" })]);
+    t.expect((await indexer.Trader.getOrThrow(alice.toLowerCase())).name).toBe("alice_2");
+  });
+
+  it("follows and unfollows keep both counts and the edge list in step", async (t) => {
+    const indexer = createTestIndexer();
+    await run(indexer, [
+      social("Followed", 1, { follower: alice, followee: carol }),
+      social("Followed", 2, { follower: bob, followee: carol }),
+      social("Followed", 3, { follower: carol, followee: alice }),
+      social("Unfollowed", 4, { follower: alice, followee: carol }),
+    ]);
+    const tr = async (a: string) => indexer.Trader.getOrThrow(a.toLowerCase());
+    t.expect(await tr(carol)).toMatchObject({ followerCount: 1, followingCount: 1 });
+    t.expect(await tr(alice)).toMatchObject({ followerCount: 1, followingCount: 0 });
+    t.expect((await indexer.Follow.getAll()).map((f) => f.id).sort()).toEqual(
+      [`${bob}_${carol}`, `${carol}_${alice}`].map((id) => id.toLowerCase()).sort(),
+    );
+    t.expect(await indexer.Follow.getOrThrow(`${bob}_${carol}`.toLowerCase())).toMatchObject({ since: 2 });
+  });
+
+  it("call votes: changes and clears move the tallies; votes before the call still count", async (t) => {
+    const hash = tx("v");
+    const indexer = createTestIndexer();
+    await run(indexer, [
+      categoryAdded(), marketCreated(),
+      // KleosSocial doesn't check the call exists: these land before CallPosted.
+      social("CallVoted", 3, { callId: 1n, voter: bob, vote: 1n }),
+      social("CallVoted", 3, { callId: 1n, voter: carol, vote: -1n }, 1),
+      betPlaced({ user: alice, side: true, amount: usd(10), n: 4, hash }),
+      callPosted({ callId: 1n, user: alice, side: true, text: "Up", n: 4, logIndex: 1, hash }),
+      social("CallVoted", 5, { callId: 1n, voter: carol, vote: 1n }), // down → up
+      social("CallVoted", 6, { callId: 1n, voter: addr(9), vote: -1n }),
+      social("CallVoted", 7, { callId: 1n, voter: bob, vote: 0n }), // cleared
+    ]);
+    t.expect(await indexer.Call.getOrThrow("1")).toMatchObject({ ups: 1, downs: 1 });
+    t.expect((await indexer.CallVote.getAll()).map((v) => [v.voter_id, v.value]).sort()).toEqual(
+      [[carol.toLowerCase(), 1], [addr(9).toLowerCase(), -1]].sort(),
+    );
+    // addr(9) never traded, but has a Trader row so CallVote.voter resolves.
+    t.expect(await indexer.Trader.get(addr(9).toLowerCase())).toBeDefined();
   });
 });

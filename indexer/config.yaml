@@ -24,7 +24,9 @@ chains:
     - event: Flagged(address indexed user, uint256 indexed marketId)
     - event: JurorJoined(address indexed juror)
     - event: JurorLeft(address indexed juror)
+    - event: JurorPruned(address indexed juror)
     - event: JuryDrawn(uint256 indexed marketId, uint8 round, address[] jurors)
+    - event: MarketExpired(uint256 indexed marketId)
     - event: MarketCreated(uint256 indexed marketId, address indexed creator, string question, uint8 category, string oracle, string criteria, uint64 closeTime)
     - event: MarketResolved(uint256 indexed marketId, bool outcome, uint256 fee)
     - event: MarketVoided(uint256 indexed marketId)
@@ -40,3 +42,12 @@ chains:
     - event: Vested(address indexed user, uint256 amount, uint256 newR)
     - event: VoteCommitted(uint256 indexed marketId, uint8 round, address indexed juror)
     - event: VoteRevealed(uint256 indexed marketId, uint8 round, address indexed juror, uint8 vote)
+  - name: KleosSocial
+    address:
+    # Deployed first on a fresh local node. Override with ENVIO_LOCAL_SOCIAL_ADDRESS.
+    - "${ENVIO_LOCAL_SOCIAL_ADDRESS:-0x5FbDB2315678afecb367f032d93F642f64180aa3}"
+    events:
+    - event: CallVoted(uint256 indexed callId, address indexed voter, int8 vote)
+    - event: Followed(address indexed follower, address indexed followee)
+    - event: NameSet(address indexed user, string name)
+    - event: Unfollowed(address indexed follower, address indexed followee)
