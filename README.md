@@ -23,7 +23,7 @@ Prediction markets are failing in four specific ways. Each one has a direct answ
 - Small crowds of proven forecasters outperform larger crowds in both markets and polls (Atanasov, Witkowski, Mellers & Tetlock, *International Journal of Forecasting*, 2025). [Source](https://www.sciencedirect.com/science/article/abs/pii/S0169207023001413)
 - Across 5,456 Polymarket and Kalshi markets, bigger bettors were not more accurate; in some markets whales had negative edge (Daleep et al., 2026). [Source](https://klementoninvesting.substack.com/p/a-fundamental-flaw-of-prediction)
 
-> **Implementation status:** every answer above is implemented and tested in `contracts/` (37 tests). The Monad testnet deployment is pending.
+> **Implementation status:** every answer above is implemented and tested in `contracts/` (48 tests). The contracts are deployed on Monad testnet (`contracts/ignition/deployments/chain-10143/deployed_addresses.json`).
 
 ## How it works
 

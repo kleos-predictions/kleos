@@ -44,7 +44,7 @@ const STACK = [
   ["Social", "Calls: a public 140-character reason attached to a bet, scored when the market resolves. Feed, follows, usernames and ▲▼ votes live on-chain"],
   ["Settlement", "Permissionless: anyone can settle any trader, so losses land even if the loser never comes back"],
   ["Frontend", "Next.js · wagmi / viem · formulas mirrored client-side so every preview matches the contract"],
-  ["Tests", "Hardhat · 34 tests; the pitch numbers (44% vs 71%, $177 + bonus payout, +0.70 / −1.43) are asserted against the contract"],
+  ["Tests", "Hardhat · 48 tests; the pitch numbers (44% vs 71%, $177 + bonus payout, +0.70 / −1.43) are asserted against the contract"],
 ];
 
 const EVENTS = [

@@ -47,7 +47,7 @@ flowchart LR
   sample -->|"no chain configured"| pages
 ```
 
-Both configs list the same contracts and events. Only the chain, the addresses and the data source differ. Envio Cloud runs `config.testnet.yaml`. The Cloud deploy and `web/src/lib/indexer.ts` are still to come.
+Both configs list the same contracts and events. Only the chain, the addresses and the data source differ. Envio Cloud runs `config.testnet.yaml`. The first Cloud deployment is live (`DEPLOY.md`).
 
 Pages pick the first source that's configured: indexer, then RPC, then sample data. Only the indexer path is new. The other two keep working throughout.
 
@@ -382,7 +382,7 @@ flowchart LR
   p3["3 · Social, sharp signal,<br/>court, protocol totals"]:::done
   p4["4 · Bet buddies (#2)"]:::todo
   p5["5 · web/src/lib/indexer.ts (#3)<br/>+ one wiring PR"]:::todo
-  p6["6 · Testnet + Envio Cloud<br/>testnet checked, Cloud deploy next"]:::next
+  p6["6 · Testnet + Envio Cloud<br/>testnet checked, first Cloud deploy live"]:::next
   p0 --> p1 --> p2 --> p3 --> p4 --> p5 --> p6
   classDef done fill:#1f6f3f,stroke:#1f6f3f,color:#fff
   classDef next fill:#ff5a36,stroke:#ff5a36,color:#0d0c0b
