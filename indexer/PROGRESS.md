@@ -74,7 +74,8 @@ Daniela's `seed-demo.ts` on `main` (commit `3a8d383`) now resolves and settles a
 - [x] ~~Testnet config reads from the public RPC~~ (2026-10-01, reverted the same day): Envio's docs say hosted indexers "have their own access to HyperSync and don't need a token", so the testnet config reads HyperSync again: 0.5 s for the full range instead of 532 s
 - [x] Start block moved to 67114786, KleosSocial's deploy block (Kleos followed at 67114811)
 - [x] `DEPLOY.md` rewritten around the free plan's checked limits: 3 deployments at once, a URL per deployment, 30-day lifetime, and the deploy schedule that keeps one alive through judging
-- [ ] First Cloud deployment (needs the commits pushed and the owner's go-ahead), then `INDEXER_URL` for #3
+- [x] First Cloud deployment (2026-10-01): `cebb79d`, endpoint `https://indexer.dev.hyperindex.xyz/25439e6/v1/graphql`. Built and synced in about a minute, `is_hyper_sync: true` with no token, no warnings or errors in the logs. Every market, trader, call and the juror pool match the contracts. Deleted automatically around Oct 31
+- [ ] `INDEXER_URL` for #3 (set it to the endpoint above)
 - [ ] Final deployment on Oct 12–13; README data flow; close #1 and #2
 
 ## Decisions
