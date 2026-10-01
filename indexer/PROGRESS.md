@@ -58,6 +58,7 @@ Daniela's `seed-demo.ts` on `main` (commit `3a8d383`) now resolves and settles a
 - [x] Wired: `/markets` and market pages past the samples, market calls, recent bets (indexer only), the feed, profiles (history, wins, losses, name; R, pending, resolvedBets and the flag stay on the contract) and the leaderboard (indexer only; samples otherwise)
 - [x] Checked against the deployment with a testnet dev server: every page 200, indexed data on each (20 leaderboard rows, market 7's 3 sharps and real bets, feed, profile history). With a broken `INDEXER_URL` the fallback fires; the chain readers are then slow without `ENVIO_API_TOKEN`
 - [x] README: data flow section
+- [x] Review follow-ups (2026-10-01): `CallPosted` no longer runs a `CallVote.getWhere` per event. Votes on a call that isn't indexed yet keep a running tally in `PendingCallTally` (id = callId), which `CallPosted` reads by id and deletes. Composite indexes match the web's queries: `Bet` and `Call` on (market, timestamp DESC), `Call` and `ReputationChange` on (trader, timestamp DESC). Simulated and testnet tests pass
 - [ ] `court-panel.tsx`, `bet-buddies.tsx`
 - [ ] Announce the wiring to Daniela (pages changed: markets, market, feed, profile, leaderboard)
 
