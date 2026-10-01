@@ -97,7 +97,8 @@ type Position {
   sharpNo: Boolean!
 }
 
-type Bet {
+# Composite index: the market page lists bets newest first.
+type Bet @index(fields: ["market", ["timestamp", "DESC"]]) {
   id: ID! # block_logIndex
   market: Market! @index
   trader: Trader! @index
@@ -150,7 +151,7 @@ type Trader {
 }
 
 # Every ReputationChanged event, so anyone can rebuild R and check the math.
-type ReputationChange {
+type ReputationChange @index(fields: ["trader", ["timestamp", "DESC"]]) {
   id: ID! # block_logIndex
   trader: Trader! @index
   market: Market # unset for Admin changes (marketId 0)
@@ -167,7 +168,9 @@ type ReputationChange {
 
 # A public one-line reason posted with a bet. Id = the callId Kleos numbers from 1, which
 # KleosSocial votes use too.
-type Call {
+type Call
+  @index(fields: ["market", ["timestamp", "DESC"]])
+  @index(fields: ["trader", ["timestamp", "DESC"]]) {
   id: ID!
   market: Market! @index
   trader: Trader! @index
@@ -181,6 +184,14 @@ type Call {
   timestamp: Int! @index
   txHash: String!
   votes: [CallVote!]! @derivedFrom(field: "call")
+}
+
+# KleosSocial votes cast on a callId before Kleos posted that call (KleosSocial doesn't check
+# that it exists). CallPosted seeds Call.ups/downs from it by id, then deletes it. Id: callId.
+type PendingCallTally {
+  id: ID!
+  ups: Int!
+  downs: Int!
 }
 
 # KleosSocial: one address following another. Id: follower_followee. Deleted on unfollow.
