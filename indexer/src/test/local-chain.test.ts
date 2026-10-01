@@ -1,8 +1,8 @@
 // Runs the real handlers over the local Hardhat chain and compares the result with the contract's
 // view functions: market pools, prices, bettors and creator; trader R, pending, flag and
-// resolvedBets; call ids and their votes. Resolution, settlement, bonus and court values are
-// covered by the simulated tests in core.test.ts. Needs the local stack deployed and seeded (dev-stack skill); skips
-// otherwise.
+// resolvedBets; call ids and their votes. The seeded market 7 is resolved and settled, so its
+// positions are checked too. Needs the local stack deployed and seeded (dev-stack skill); skips
+// otherwise. The live-testnet counterpart is testnet.test.ts.
 import { readFileSync } from "node:fs";
 import { describe, it } from "vitest";
 import { createTestIndexer } from "envio";
@@ -70,6 +70,51 @@ describe.skipIf(!found)("seeded local chain", () => {
       t.expect(tr.resolvedBets).toBeLessThanOrEqual(rep.resolvedBets);
     }
 
+    // Resolution and settlement: state, outcome, bonus pot and each settled position.
+    for (const m of markets) {
+      const [chain, pay] = await Promise.all([
+        read<{ state: number; outcome: boolean; voided: boolean }>(kleos, "getMarket", [BigInt(m.id)]),
+        read<[bigint, bigint, bigint, boolean]>(kleos, "payouts", [BigInt(m.id)]),
+      ]);
+      t.expect([m.state, m.voided, m.bonusOpen], `market ${m.id} state`).toEqual([["Open", "Proposed", "Disputed", "Resolved"][chain.state], chain.voided, pay[3]]);
+      if (m.state === "Resolved" && !m.voided) t.expect(m.outcome, `market ${m.id} outcome`).toBe(chain.outcome);
+      if (pay[3]) t.expect([m.bonusPool, m.bonusWeight], `market ${m.id} bonus`).toEqual([pay[0], pay[1]]);
+      const positions = await indexer.Position.getWhere({ market_id: { _eq: m.id } });
+      for (const pos of positions) {
+        const user = pos.trader_id;
+        const [isSettled, weight] = await Promise.all([
+          read<boolean>(kleos, "settled", [BigInt(m.id), user]),
+          read<bigint>(kleos, "bonusWeight", [BigInt(m.id), user]),
+        ]);
+        t.expect([pos.settled, pos.bonusWeight], `position ${pos.id}`).toEqual([isSettled, weight]);
+      }
+    }
+
+    // Kleos Court: every round's jury, commits and reveals, as the contract stored them.
+    for (const m of markets.filter((x) => x.courtRound > 0)) {
+      const court = await read<{ round: number; revealed: number }>(kleos, "getCourt", [BigInt(m.id)]);
+      t.expect(m.courtRound, `market ${m.id} court round`).toBe(court.round);
+      for (let r = 1; r <= court.round; r++) {
+        const [round, jury] = await Promise.all([indexer.CourtRound.getOrThrow(`${m.id}_${r}`), read<Address[]>(kleos, "getJury", [BigInt(m.id), r])]);
+        t.expect(round.jurors, `round ${round.id} jury`).toEqual(jury.map((j) => j.toLowerCase()));
+        const [commits, votes] = await Promise.all([
+          Promise.all(jury.map((j) => read<`0x${string}`>(kleos, "commitments", [BigInt(m.id), r, j]))),
+          Promise.all(jury.map((j) => read<number>(kleos, "votes", [BigInt(m.id), r, j]))),
+        ]);
+        t.expect([round.commits, round.reveals], `round ${round.id} commits, reveals`).toEqual([
+          commits.filter((c) => BigInt(c) !== 0n).length, votes.filter((v) => v !== 0).length,
+        ]);
+        // A round is failed when a later one was drawn, or when the court voided the market without a verdict.
+        t.expect(round.failed, `round ${round.id} failed`).toBe(r < court.round || (m.voided && m.verdict === undefined));
+      }
+    }
+
+    // The juror pool, and KleosSocial names and followers.
+    const pool = (await read<Address[]>(kleos, "jurorPool")).map((a) => a.toLowerCase()).sort();
+    t.expect(traders.filter((x) => x.isJuror).map((x) => x.id).sort()).toEqual(pool);
+    t.expect(traders.map((x) => x.name ?? "")).toEqual(await read<string[]>(social, "namesOf", [traders.map((x) => x.id)]));
+    for (const x of traders) t.expect(x.followerCount, `followers ${x.id}`).toBe(Number(await read<bigint>(social, "followerCount", [x.id])));
+
     // Calls: one per CallPosted, keyed by the contract's callId, which KleosSocial votes use too.
     const calls = await indexer.Call.getAll();
     const logs = await client.getContractEvents({ ...kleos, eventName: "CallPosted", fromBlock: 0n });
@@ -78,5 +123,6 @@ describe.skipIf(!found)("seeded local chain", () => {
     // The seed votes on its calls; with matching ids those votes are visible.
     const [ups, downs] = await read<[bigint[], bigint[], number[]]>(social, "tallies", [calls.map((c) => BigInt(c.id)), kleos.address]);
     t.expect(ups.some((u) => u > 0n) && downs.some((d) => d > 0n), "seeded votes land on indexed call ids").toBe(true);
+    t.expect(calls.map((c) => [c.ups, c.downs])).toEqual(calls.map((_, i) => [Number(ups[i]), Number(downs[i])]));
   }, 120_000);
 });

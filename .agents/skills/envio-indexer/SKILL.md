@@ -31,8 +31,8 @@ Envio 3.12.1 ships official skills in `indexer/.agents/skills/indexer-*` (handle
 - **Jury rewards and penalties** are `ReputationChanged` rows with `entryPrice` 0 and `marketId` > 0. They aren't bets: don't count them as wins or losses.
 - **`ReputationChanged` carries `newR` and `pendingR`.** Set the trader's values from them rather than accumulating deltas. Positive ΔR goes to pending, and R grows only on `Vested`.
 - **The `Settled` payout doesn't say who won.** `payout > 0` also covers refunds. Derive winners from indexed positions plus the `MarketResolved` outcome.
-- **`MarketResolved` never fires for voided markets.** A court AMBIGUOUS verdict or a failed court emits `MarketVoided` alone.
-- **Reputation only moves in markets with ≥ $1,000 and ≥ 10 distinct bettors.** Track both on `Market`.
+- **`MarketResolved` never fires for voided markets.** A court AMBIGUOUS verdict, a failed court or expiry emits `MarketVoided` instead (`MarketExpired` follows it).
+- **Reputation only moves in markets with ≥ $1,000 and ≥ 10 distinct bettors.** Track both on `Market`. `resolvedBets` also needs the position (both sides) to be ≥ $50.
 - **The sharp signal** uses the trader's R at bet time (R ≥ 16), from the `Trader` entity when `BetPlaced` fires.
 - **A call's id** is the `callId` field of its `CallPosted` event, numbered by `Kleos` from 1 (`callCount`). `KleosSocial.vote` and `CallVoted` use the same number, so use it as the `Call` entity id.
 
@@ -42,6 +42,7 @@ Envio 3.12.1 ships official skills in `indexer/.agents/skills/indexer-*` (handle
 
 - **Unit:** `simulate: [...]` feeds synthetic events. Use it for edge cases.
 - **Integration:** `{ startBlock, endBlock }` on chain 31337 reads the real local chain over RPC. Bring the chain up with the `dev-stack` skill first. These tests skip when the RPC is down.
+- **Live testnet:** `pnpm test:testnet` swaps in `config.testnet.yaml`, indexes the real deployment through HyperSync and compares it with the contracts. Needs `ENVIO_API_TOKEN` in `indexer/.env`.
 
 Only `envio dev` (the local GraphQL server) needs Docker. For the web app, use Envio Cloud instead.
 
