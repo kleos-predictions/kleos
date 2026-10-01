@@ -105,7 +105,7 @@ export default async function MarketPage(props: PageProps<"/market/[id]">) {
                 <span className={`w-10 ${b.side ? "text-accent" : "text-ink"}`}>{b.side ? "YES" : "NO"}</span>
                 <span className="w-20 text-right">${b.amount.toLocaleString("en-US")}</span>
                 <span className="flex-1 text-muted">
-                  × {b.mult.toFixed(1)} = <span className="text-ink">${Math.round(b.amount * b.mult).toLocaleString("en-US")}</span>
+                  × {b.mult.toFixed(2)} = <span className="text-ink">${Math.round(b.amount * b.mult).toLocaleString("en-US")}</span>
                 </span>
                 <span className="text-muted">{b.ago}</span>
               </li>

@@ -406,7 +406,7 @@ export function ResolutionPanel({ marketId, oracle }: { marketId: number; oracle
         </div>
       )}
 
-      {notice && <p className="rounded-[12px] border border-line-strong px-4 py-3 text-sm">{notice}</p>}
+      {notice && <p role="status" aria-live="polite" className="rounded-[12px] border border-line-strong px-4 py-3 text-sm">{notice}</p>}
       {error && (
         <p role="alert" className="rounded-[12px] border border-accent px-4 py-3 text-sm">
           {error}
