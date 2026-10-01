@@ -2,7 +2,7 @@
 
 **Testnet prototype.** This project uses test tokens and is not ready for production or real funds. Security review and live acceptance remain incomplete.
 
-**Prediction Market with a Verifiable Reputation Layer.** Built on Monad testnet.
+## Prediction Market with a Verifiable Reputation Layer. Built on Monad testnet.
 
 <img width="3000" height="1000" alt="image" src="https://github.com/user-attachments/assets/3f0683aa-7e7a-4590-9c67-e028b576fd30" />
 
