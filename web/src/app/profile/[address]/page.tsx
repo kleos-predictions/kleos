@@ -27,26 +27,32 @@ type View = {
 
 const EMPTY: View = { r: 0, pending: 0, resolvedBets: 0, flagged: false, wins: 0, losses: 0, history: [], historyError: true };
 
-async function load(address: Address): Promise<View> {
+async function load(address: Address): Promise<{ view: View; calls: FeedItem[] }> {
   if (IS_LIVE) {
+    // One indexer query for the profile and its calls; on the chain path, both reads run in parallel.
+    const fromChain = async () => {
+      const [profile, calls] = await Promise.all([readProfile(address).catch(() => EMPTY), readFeed(50, address).catch(() => [])]);
+      return { profile, calls };
+    };
     try {
-      return await indexer.preferIndexer(() => indexer.readProfile(address), () => readProfile(address));
+      const { profile, calls } = await indexer.preferIndexer(() => indexer.readProfilePage(address), fromChain);
+      return { view: profile, calls };
     } catch {
-      return EMPTY; // chain unreachable: show an honest empty state instead of crashing
+      return { view: EMPTY, calls: [] }; // chain unreachable: show an honest empty state instead of crashing
     }
   }
   const trader = getTrader(address);
-  return { ...trader, pending: 0, resolvedBets: trader.wins + trader.losses, flagged: false, history: reputationHistory(trader), historyError: false };
+  return {
+    view: { ...trader, pending: 0, resolvedBets: trader.wins + trader.losses, flagged: false, history: reputationHistory(trader), historyError: false },
+    calls: sampleFeed(address),
+  };
 }
 
 export default async function ProfilePage(props: PageProps<"/profile/[address]">) {
   const { address } = await props.params;
   if (!isAddress(address)) notFound();
 
-  const v = await load(address);
-  const calls: FeedItem[] = IS_LIVE
-    ? await indexer.preferIndexer(() => indexer.readFeed(50, address), () => readFeed(50, address)).catch(() => [])
-    : sampleFeed(address);
+  const { view: v, calls } = await load(address);
   const tier = tierOf(v.r);
   const activated = v.resolvedBets >= PARAMS.nMin;
   const mult = activated ? multiplier(v.r) : 1;

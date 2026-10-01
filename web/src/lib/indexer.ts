@@ -1,6 +1,7 @@
-// Server-side reads from the Envio HyperIndex indexer (../indexer): one GraphQL query per read,
-// cached briefly. The Envio free plan allows 100 queries a minute across all visitors, so queries
-// only ever run here on the server, never per component or from the browser.
+// Server-side reads from the Envio HyperIndex indexer (../indexer). Each page makes one GraphQL
+// operation (several root fields count as one query), cached briefly. The Envio free plan allows
+// 100 queries a minute across all visitors, so queries only ever run here on the server, never per
+// component or from the browser.
 //
 // Pages read indexer → chain (onchain.ts) → sample data (data.ts): `preferIndexer` falls back to
 // the chain reader whenever INDEXER_URL is unset or the indexer fails. Whatever must be exact at the
@@ -10,12 +11,16 @@ import { connection } from "next/server";
 import type { Address } from "viem";
 import { kleosAbi } from "./abi";
 import { IS_LIVE, IS_LOCAL_CHAIN, KLEOS_ADDRESS, publicClient } from "./chain";
-import type { Bet, Call, Category, FeedItem, Market, RepChange, Trader } from "./data";
+import { liveStatus, type Bet, type Call, type Category, type FeedItem, type Market, type RepChange, type Trader } from "./data";
 import type { LiveProfile } from "./onchain";
 
 const URL = process.env.INDEXER_URL;
-/** Seconds a query result is reused. Keeps the site far below the free plan's query limit. */
-const TTL = 10;
+/** Seconds a result is reused: short where a visitor expects to see their own action, longer for lists. */
+const TTL = { page: 10, list: 30 } as const;
+/** Price points kept for the small chart on a market card. The market page gets the full history. */
+const CARD_POINTS = 48;
+/** Reputation changes shown on a profile. */
+const HISTORY_LIMIT = 200;
 
 /** The deployed indexer serves Monad testnet, so it's skipped in demo mode and on the local chain. */
 export const HAS_INDEXER = Boolean(URL) && IS_LIVE && !IS_LOCAL_CHAIN;
@@ -26,6 +31,9 @@ const DAY = new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric", t
 /** Indexer first, then the chain. Logs indexer failures so a broken deployment doesn't go unnoticed. */
 export async function preferIndexer<T>(fromIndexer: () => Promise<T>, fromChain: () => Promise<T>): Promise<T> {
   if (!HAS_INDEXER) return fromChain();
+  // Outside the try: during a build this throws Next's signal to render the page per request,
+  // which must not be mistaken for an indexer failure.
+  await connection();
   try {
     return await fromIndexer();
   } catch (err) {
@@ -34,13 +42,12 @@ export async function preferIndexer<T>(fromIndexer: () => Promise<T>, fromChain:
   }
 }
 
-async function query<T>(gql: string, variables: Record<string, unknown> = {}): Promise<T> {
-  await connection(); // live data: render per request, never at build time
+async function query<T>(gql: string, variables: Record<string, unknown>, ttl: number): Promise<T> {
   const res = await fetch(URL!, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ query: gql, variables }),
-    next: { revalidate: TTL },
+    next: { revalidate: ttl },
   });
   if (!res.ok) throw new Error(`indexer HTTP ${res.status}`);
   const body = (await res.json()) as { data?: T; errors?: { message: string }[] };
@@ -60,12 +67,14 @@ const now = () => Math.floor(Date.now() / 1000);
 
 // ─── Markets ──────────────────────────────────────────────────────────────────
 
-const MARKET_FIELDS = `
-  id question oracle criteria creator closeTime state voided
+const marketFields = (points: string) => `
+  id question oracle criteria creator closeTime state
   yesMoney noMoney bettorCount priceRepYes priceMoneyYes sharpYes sharpNo
   category { name }
-  pricePoints(order_by: { timestamp: asc }) { priceRepYes priceMoneyYes }
+  pricePoints${points} { priceRepYes priceMoneyYes }
 `;
+const ALL_POINTS = "(order_by: { timestamp: asc })";
+const LAST_POINTS = `(order_by: { timestamp: desc }, limit: ${CARD_POINTS})`; // newest first; reversed below
 
 type MarketRow = {
   id: string;
@@ -75,7 +84,6 @@ type MarketRow = {
   creator: string;
   closeTime: string;
   state: "Open" | "Proposed" | "Disputed" | "Resolved";
-  voided: boolean;
   yesMoney: string;
   noMoney: string;
   bettorCount: number;
@@ -101,8 +109,6 @@ const team = () =>
 function toMarket(m: MarketRow, owner: string, names: Map<string, string>): Market {
   const byTeam = m.creator.toLowerCase() === owner;
   const closeMs = Number(m.closeTime) * 1000;
-  const status: Market["status"] =
-    m.state === "Resolved" ? "resolved" : m.state !== "Open" ? "dispute" : closeMs - Date.now() < 86_400_000 ? "closing" : "live";
   // The chart starts at 50/50 and steps through the price after every bet.
   const history = [{ t: 0, rep: 0.5, money: 0.5 }, ...m.pricePoints.map((p, i) => ({ t: i + 1, rep: wad(p.priceRepYes), money: wad(p.priceMoneyYes) }))];
   if (history.length === 1) history.push({ t: 1, rep: 0.5, money: 0.5 });
@@ -110,7 +116,7 @@ function toMarket(m: MarketRow, owner: string, names: Map<string, string>): Mark
     id: Number(m.id),
     question: m.question,
     category: (m.category.name || "Culture") as Category,
-    status,
+    status: liveStatus(m.state, closeMs),
     oracle: m.oracle,
     criteria: m.criteria,
     creator: byTeam ? undefined : { address: m.creator, name: names.get(m.creator.toLowerCase()) },
@@ -126,7 +132,8 @@ function toMarket(m: MarketRow, owner: string, names: Map<string, string>): Mark
   };
 }
 
-async function marketsWithCreators(rows: MarketRow[]): Promise<Market[]> {
+/** Adds creator usernames. A second query only when a trader (not the team) created one of the markets. */
+async function withCreators(rows: MarketRow[], ttl: number): Promise<Market[]> {
   const owner = await team();
   const creators = [...new Set(rows.map((m) => m.creator.toLowerCase()).filter((c) => c !== owner))];
   const names = new Map<string, string>();
@@ -134,40 +141,48 @@ async function marketsWithCreators(rows: MarketRow[]): Promise<Market[]> {
     const { Trader } = await query<{ Trader: { id: string; name: string | null }[] }>(
       `query ($ids: [String!]) { Trader(where: { id: { _in: $ids } }) { id name } }`,
       { ids: creators },
+      ttl,
     );
     for (const t of Trader) if (t.name) names.set(t.id, t.name);
   }
   return rows.map((m) => toMarket(m, owner, names));
 }
 
-/** One market, or null if it doesn't exist. Mirrors onchain.readLiveMarket. */
-export async function readLiveMarket(id: number): Promise<Market | null> {
-  const { Market } = await query<{ Market: MarketRow[] }>(`query ($id: String!) { Market(where: { id: { _eq: $id } }) { ${MARKET_FIELDS} } }`, {
-    id: String(id),
-  });
-  return Market.length ? (await marketsWithCreators(Market))[0] : null;
+/** Every market, newest first, with the last few prices for the card chart. */
+export async function readMarkets(): Promise<Market[]> {
+  const { Market } = await query<{ Market: MarketRow[] }>(`{ Market { ${marketFields(LAST_POINTS)} } }`, {}, TTL.list);
+  // Ids are strings in GraphQL, so sort them as numbers here.
+  const rows = Market.map((m) => ({ ...m, pricePoints: [...m.pricePoints].reverse() })).sort((a, b) => Number(b.id) - Number(a.id));
+  return withCreators(rows, TTL.list);
 }
 
-/** Markets with id ≥ fromId, oldest first. Mirrors onchain.readExtraMarkets. */
-export async function readExtraMarkets(fromId: number): Promise<Market[]> {
-  // Ids are strings in GraphQL, so filter and sort them as numbers here. There are only a few markets.
-  const { Market } = await query<{ Market: MarketRow[] }>(`{ Market { ${MARKET_FIELDS} } }`);
-  const rows = Market.filter((m) => Number(m.id) >= fromId).sort((a, b) => Number(a.id) - Number(b.id));
-  return marketsWithCreators(rows);
-}
+type BetRow = { side: boolean; amount: string; multiplier: string; traderR: string; timestamp: number; trader: { id: string } };
 
-/** The latest bets in a market, newest first. */
-export async function readRecentBets(marketId: number, limit = 8): Promise<Bet[]> {
-  const { Bet } = await query<{ Bet: { side: boolean; amount: string; multiplier: string; traderR: string; timestamp: number; trader: { id: string } }[] }>(
-    `query ($id: String!, $limit: Int!) {
-      Bet(where: { market_id: { _eq: $id } }, order_by: [{ timestamp: desc }, { id: desc }], limit: $limit) {
+const toBet = (b: BetRow, t: number): Bet => ({
+  address: b.trader.id,
+  side: b.side,
+  amount: usd(b.amount),
+  mult: wad(b.multiplier),
+  r: wad(b.traderR),
+  ago: ago(t - b.timestamp),
+});
+
+/** Everything a market page shows, in one query: the market, its latest bets and its latest calls. */
+export async function readMarketPage(id: number): Promise<{ market: Market | null; bets: Bet[]; calls: Call[] }> {
+  const data = await query<{ Market: MarketRow[]; Bet: BetRow[]; Call: CallRow[] }>(
+    `query ($id: String!) {
+      Market(where: { id: { _eq: $id } }) { ${marketFields(ALL_POINTS)} }
+      Bet(where: { market_id: { _eq: $id } }, order_by: [{ timestamp: desc }, { id: desc }], limit: 8) {
         side amount multiplier traderR timestamp trader { id }
       }
+      Call(where: { market_id: { _eq: $id } }, order_by: [{ timestamp: desc }, { id: desc }], limit: 10) { ${CALL_FIELDS} }
     }`,
-    { id: String(marketId), limit },
+    { id: String(id) },
+    TTL.page,
   );
   const t = now();
-  return Bet.map((b) => ({ address: b.trader.id, side: b.side, amount: usd(b.amount), mult: wad(b.multiplier), r: wad(b.traderR), ago: ago(t - b.timestamp) }));
+  const market = data.Market.length ? (await withCreators(data.Market, TTL.page))[0] : null;
+  return { market, bets: data.Bet.map((b) => toBet(b, t)), calls: data.Call.map((c) => toCall(c, t)) };
 }
 
 // ─── Calls and the feed ───────────────────────────────────────────────────────
@@ -201,24 +216,22 @@ function toCall(c: CallRow, t: number): Call {
   };
 }
 
-/** One market's latest calls. Mirrors onchain.readCalls. */
-export async function readCalls(marketId: number, limit = 10): Promise<Call[]> {
-  const { Call } = await query<{ Call: CallRow[] }>(
-    `query ($id: String!, $limit: Int!) { Call(where: { market_id: { _eq: $id } }, order_by: [{ timestamp: desc }, { id: desc }], limit: $limit) { ${CALL_FIELDS} } }`,
-    { id: String(marketId), limit },
-  );
-  const t = now();
-  return Call.map((c) => toCall(c, t));
-}
+const toFeedItem = (c: CallRow, t: number): FeedItem => ({
+  ...toCall(c, t),
+  marketId: Number(c.market.id),
+  question: c.market.question,
+  result: RESULTS[c.result],
+});
 
-/** Every market's latest calls, or one trader's, with their results. Mirrors onchain.readFeed. */
-export async function readFeed(limit = 50, user?: Address): Promise<FeedItem[]> {
+/** Every market's latest calls, with their results. Mirrors onchain.readFeed. */
+export async function readFeed(limit = 50): Promise<FeedItem[]> {
   const { Call } = await query<{ Call: CallRow[] }>(
-    `query ($where: Call_bool_exp!, $limit: Int!) { Call(where: $where, order_by: [{ timestamp: desc }, { id: desc }], limit: $limit) { ${CALL_FIELDS} } }`,
-    { where: user ? { trader_id: { _eq: user.toLowerCase() } } : {}, limit },
+    `query ($limit: Int!) { Call(order_by: [{ timestamp: desc }, { id: desc }], limit: $limit) { ${CALL_FIELDS} } }`,
+    { limit },
+    TTL.list,
   );
   const t = now();
-  return Call.map((c) => ({ ...toCall(c, t), marketId: Number(c.market.id), question: c.market.question, result: RESULTS[c.result] }));
+  return Call.map((c) => toFeedItem(c, t));
 }
 
 // ─── Traders ──────────────────────────────────────────────────────────────────
@@ -232,6 +245,7 @@ export async function readLeaderboard(limit = 50): Promise<Trader[]> {
       }
     }`,
     { limit },
+    TTL.list,
   );
   return Trader.map((t) => ({ address: t.id, name: t.name ?? undefined, r: wad(t.r), wins: t.wins, losses: t.losses }));
 }
@@ -249,26 +263,28 @@ type ChangeRow = {
 };
 
 /**
- * A profile. R, pending, resolvedBets and the flag come from the contract: they must be exact, and
- * seeds set resolvedBets without an event, so the index can't know it. The name, wins, losses and
- * the full reputation history come from the indexer. Mirrors onchain.readProfile.
+ * A profile and its calls, in one query. R, pending, resolvedBets and the flag come from the
+ * contract: they must be exact, and seeds set resolvedBets without an event, so the index can't
+ * know it. The name, wins, losses, reputation history and calls come from the indexer.
  */
-export async function readProfile(user: Address): Promise<LiveProfile> {
+export async function readProfilePage(user: Address): Promise<{ profile: LiveProfile; calls: FeedItem[] }> {
   const id = user.toLowerCase();
-  const [rep, { Trader, ReputationChange }] = await Promise.all([
+  const [rep, data] = await Promise.all([
     publicClient.readContract({ address: KLEOS_ADDRESS!, abi: kleosAbi, functionName: "reputation", args: [user] }),
-    query<{ Trader: { name: string | null; wins: number; losses: number }[]; ReputationChange: ChangeRow[] }>(
+    query<{ Trader: { name: string | null; wins: number; losses: number }[]; ReputationChange: ChangeRow[]; Call: CallRow[] }>(
       `query ($id: String!) {
         Trader(where: { id: { _eq: $id } }) { name wins losses }
-        ReputationChange(where: { trader_id: { _eq: $id } }, order_by: [{ timestamp: desc }, { id: desc }]) {
+        ReputationChange(where: { trader_id: { _eq: $id } }, order_by: [{ timestamp: desc }, { id: desc }], limit: ${HISTORY_LIMIT}) {
           kind delta newR entryPrice side outcome timestamp txHash market { id question }
         }
+        Call(where: { trader_id: { _eq: $id } }, order_by: [{ timestamp: desc }, { id: desc }], limit: 50) { ${CALL_FIELDS} }
       }`,
       { id },
+      TTL.page,
     ),
   ]);
-  const trader = Trader[0];
-  const history: RepChange[] = ReputationChange.map((c) => {
+  const trader = data.Trader[0];
+  const history: RepChange[] = data.ReputationChange.map((c) => {
     // Same labels as the chain reader: seeds (market 0) and jury duty aren't bets.
     const label = c.kind === "Admin" ? "Genesis seed (demo)" : c.kind === "Jury" ? "Jury duty" : null;
     const question = c.market?.question;
@@ -287,15 +303,19 @@ export async function readProfile(user: Address): Promise<LiveProfile> {
       isBet: c.kind === "Bet",
     };
   });
+  const t = now();
   return {
-    name: trader?.name ?? undefined,
-    r: Number(rep.r) / WAD,
-    pending: Number(rep.pending) / WAD,
-    resolvedBets: rep.resolvedBets,
-    flagged: rep.flagged,
-    wins: trader?.wins ?? 0,
-    losses: trader?.losses ?? 0,
-    history,
-    historyError: false,
+    profile: {
+      name: trader?.name ?? undefined,
+      r: Number(rep.r) / WAD,
+      pending: Number(rep.pending) / WAD,
+      resolvedBets: rep.resolvedBets,
+      flagged: rep.flagged,
+      wins: trader?.wins ?? 0,
+      losses: trader?.losses ?? 0,
+      history,
+      historyError: false,
+    },
+    calls: data.Call.map((c) => toFeedItem(c, t)),
   };
 }

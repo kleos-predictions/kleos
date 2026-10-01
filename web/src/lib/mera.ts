@@ -33,12 +33,16 @@ const rpId = () => location.hostname;
 function accountFromPrf(prfOutput: Uint8Array, credential: PasskeyCredentialMetadata): UnlockedAccount {
   const seed = mnemonicToSeedSync(entropyToMnemonic(prfOutput, wordlist));
   prfOutput.fill(0);
+  const root = HDKey.fromMasterSeed(seed);
+  const node = root.derive(EVM_PATH);
   try {
-    const node = HDKey.fromMasterSeed(seed).derive(EVM_PATH);
     if (!node.privateKey) throw new Error("Key derivation failed");
+    // The session keeps its own copy of the key, so both HD nodes can be wiped right after.
     const session = createSecp256k1SigningSession({ privateKey: node.privateKey });
     return { session, address: getEvmAddress(session.publicKey), credential };
   } finally {
+    node.wipePrivateData();
+    root.wipePrivateData();
     seed.fill(0);
   }
 }

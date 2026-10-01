@@ -5,7 +5,15 @@ import { multiplier, reputationDelta } from "./math";
 import { tierOf } from "./tiers";
 
 export type Category = "Crypto" | "Sports" | "Tech" | "Culture";
-export type Status = "live" | "closing" | "dispute" | "resolved";
+export type Status = "live" | "closing" | "closed" | "dispute" | "resolved";
+
+/** A live market's status from its on-chain state (Open, Proposed, Disputed, Resolved) and close time. */
+export function liveStatus(state: "Open" | "Proposed" | "Disputed" | "Resolved", closeMs: number, now = Date.now()): Status {
+  if (state === "Resolved") return "resolved";
+  if (state !== "Open") return "dispute";
+  if (now >= closeMs) return "closed"; // betting is over; waiting for someone to propose the outcome
+  return closeMs - now < 86_400_000 ? "closing" : "live";
+}
 
 export type PricePoint = { t: number; rep: number; money: number };
 
