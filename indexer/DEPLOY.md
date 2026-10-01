@@ -46,7 +46,7 @@ In the Envio dashboard, install the **Envio Deployments** GitHub app and grant i
 
 `config.yaml` stays pointed at the local chain, because the tests use it. `config.testnet.yaml` is what Envio Cloud runs:
 - the same `name`, `disable_default_cross_chain: true` and all 28 events as `config.yaml`
-- chain `10143` with no `rpc:` entry, since HyperSync serves it natively
+- chain `10143`, read from the public Monad RPC (`for: sync`, 100 blocks per request, the RPC's `eth_getLogs` limit). HyperSync would need `ENVIO_API_TOKEN`, and Envio Cloud's free Development plan can't set environment variables ("a production feature"). Same results as HyperSync on the real range, about 200x slower: 9 minutes for the first 230k blocks. To switch back on a paid plan, remove the `rpc:` block and set the token
 - the Kleos address and start block from step 0 as literals, so the public config shows the real contract. A contract redeploy needs both changed, and a new indexer deployment.
 
 Before any deploy, check it locally against real testnet data. No Docker is needed: `createTestIndexer` can process a real testnet block range with `ENVIO_API_TOKEN` set.
@@ -68,13 +68,12 @@ npx envio-cloud indexer add --name kleos --repo kleos-predictions/kleos --branch
 | Config file | `config.testnet.yaml` | `config.yaml` is the local one |
 | Deployment branch | `main` | |
 | Automatically deploy on push | **Off** | `main` gets frequent pushes, mostly web changes. The free plan allows 3 deployments per indexer, and each one re-indexes and may change the URL, so we deploy on purpose |
-| Env var | `ENVIO_API_TOKEN` = the token from step 1 | HyperSync access. Keys must start with `ENVIO_`, and changes apply on the next deployment |
+| Env vars | None | Not available on the free plan. Only needed for HyperSync |
 
 The config file path is relative to the root directory. Envio Cloud uploads only the root directory, and skips dotfiles and any folder named `generated` or `node_modules`, so `.env` is never uploaded.
 
 ```bash
 npx envio-cloud indexer settings set kleos      # root dir, config file, branch
-npx envio-cloud indexer env set kleos           # ENVIO_API_TOKEN
 ```
 
 ## 6. Deploy and verify

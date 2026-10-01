@@ -68,6 +68,8 @@ Daniela's `seed-demo.ts` on `main` (commit `3a8d383`) now resolves and settles a
 - [x] Contracts on Monad testnet (Daniela, 2026-09-30): Kleos `0xd68a1F212fa52663468BBB6F0456Cd6e7Ce854Cb`, deployed in block 67114811. Deployed bytecode of all three contracts matches the source on `main`.
 - [x] Real testnet range tested locally (2026-10-01): with `config.testnet.yaml` and the values above, the handlers indexed blocks 67114811–67345206: 8 markets (matches `marketCount`), 33 bets, 14 calls, 20 traders, 27 reputation changes. Bettor counts and both prices match the contract for every market.
 - [x] Address and start block written into `config.testnet.yaml` as literals (2026-10-01)
+- [x] Envio Cloud indexer `kleos` added (2026-10-01): org `kleos-predictions`, root `indexer`, `config.testnet.yaml`, branch `main`, Development plan, auto-deploy off, 0/3 deployments used
+- [x] Testnet config reads from the public RPC (2026-10-01): env vars are a paid feature, so the free plan can't pass `ENVIO_API_TOKEN` for HyperSync. Tested with no token: identical results over blocks 67114811 onward, in 532 s
 - [ ] Cloud deploy, README data flow, close #1 and #2
 
 ## Decisions
