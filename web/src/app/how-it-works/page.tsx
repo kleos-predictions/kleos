@@ -1,7 +1,6 @@
 import type { Metadata } from "next";
 import { FormulaLab } from "@/components/formula-lab";
-import { CourtStepper } from "@/components/court-stepper";
-import { FailureGlyph, KleosLoop, MoneyFlow, PasskeyFlow, VerifyPipeline } from "@/components/how-illustrations";
+import { CheckTheMath, CourtStrip, FailureComic, NoSetup, PayoutSplit, SameBetDifferentWeight } from "@/components/how-illustrations";
 import { LaurelBadge } from "@/components/laurel";
 import { PARAMS } from "@/lib/math";
 import { TIER_NAMES, TIER_THRESHOLDS } from "@/lib/tiers";
@@ -142,9 +141,9 @@ export default function HowItWorks() {
           A prediction market with a verifiable reputation layer. Every bet weighs{" "}
           <span className="text-ink">money × reputation</span>, and reputation only comes from being right when the crowd was wrong.
         </p>
-        <figure className="card mt-4 flex flex-col gap-2 p-4 md:p-6">
-          <KleosLoop />
-          <figcaption className="lbl text-center">One loop: every resolved bet feeds the weight of the next one</figcaption>
+        <figure className="card mt-4 flex flex-col gap-3 p-5 md:p-7">
+          <span className="lbl">Same bet, different weight</span>
+          <SameBetDifferentWeight />
         </figure>
       </header>
 
@@ -165,7 +164,7 @@ export default function HowItWorks() {
                 <Status live={f.live} />
               </div>
               <div className="rounded-[12px] bg-card-alt px-4 py-3">
-                <FailureGlyph kind={GLYPHS[i]} />
+                <FailureComic kind={GLYPHS[i]} />
               </div>
               <h3 className="text-[21px] font-medium">{f.title}</h3>
               <p className="leading-relaxed text-muted">
@@ -236,31 +235,26 @@ export default function HowItWorks() {
           <h2 id="close-to-payout" className="font-dot text-[28px] font-black md:text-[36px]">FROM CLOSE TO PAYOUT</h2>
           <p className="text-muted">Who decides the outcome, and where the money goes once it&apos;s decided.</p>
         </div>
-        <div className="grid gap-6 lg:grid-cols-2">
-          <article className="card flex flex-col gap-4 p-6">
-            <span className="lbl">The Kleos Court · step through a dispute</span>
-            <CourtStepper />
-          </article>
-          <article className="card flex flex-col gap-4 p-6">
-            <span className="lbl">Money pays money · a $1,000 losing side</span>
-            <MoneyFlow />
-            <p className="text-sm leading-relaxed text-muted">
-              Winners split the losers&apos; money by stake, like any pool. Reputation never takes anyone&apos;s money: it only shares the 2% bonus.
-            </p>
-          </article>
-        </div>
+        <article className="card flex flex-col gap-4 p-5 md:p-7">
+          <span className="lbl">Who decides · the Kleos Court</span>
+          <CourtStrip />
+        </article>
+        <article className="card flex flex-col gap-4 p-5 md:p-7">
+          <span className="lbl">Who gets paid · same payout per dollar</span>
+          <PayoutSplit />
+        </article>
       </section>
 
       <section className="flex flex-col gap-6" aria-labelledby="tech">
         <h2 id="tech" className="font-dot text-[28px] font-black md:text-[36px]">TECH FOOTPRINT</h2>
-        <div className="grid gap-6 lg:grid-cols-2">
+        <div className="grid gap-6">
           <figure className="card flex flex-col gap-3 p-6">
-            <span className="lbl">Accounts · one touch to bet</span>
-            <PasskeyFlow />
+            <span className="lbl">Accounts · nothing to set up</span>
+            <NoSetup />
           </figure>
           <figure className="card flex flex-col gap-3 p-6">
-            <span className="lbl">Verifiability · chain → Envio → profile</span>
-            <VerifyPipeline />
+            <span className="lbl">Verifiability · check any point yourself</span>
+            <CheckTheMath />
           </figure>
         </div>
         <div className="card divide-y divide-line">
