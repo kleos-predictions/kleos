@@ -13,8 +13,9 @@
 // run this before setup-sponsor.
 import { readFileSync } from "node:fs";
 import { network } from "hardhat";
-import { keccak256, parseEther, parseEventLogs, parseUnits, type Address } from "viem";
-import { LOCAL_CHAIN_ID, fundDemoWallets, getDemoWallets } from "./demo-wallets.ts";
+import { keccak256, parseEther, parseEventLogs, parseUnits, type Address, type Hex } from "viem";
+import { privateKeyToAccount } from "viem/accounts";
+import { LOCAL_CHAIN_ID, demoSecret, fundDemoWallets, getDemoWallets } from "./demo-wallets.ts";
 
 const { viem } = await network.getOrCreate();
 const publicClient = await viem.getPublicClient();
@@ -44,6 +45,18 @@ const LOCAL = chainId === LOCAL_CHAIN_ID;
 const wallets = await getDemoWallets(viem, chainId);
 await fundDemoWallets(owner, wallets, publicClient, chainId);
 const usdAmount = (n: number) => parseUnits(String(n), 6);
+
+// Test USD comes from KleosUSD's sponsor: the owner until setup-sponsor runs, then the sponsor
+// wallet whose key setup-sponsor keeps in contracts/.env.demo. Either way the seed keeps working.
+const sponsorAddress = (await usd.read.sponsor()).toLowerCase();
+const sponsorKey = demoSecret("SPONSOR_PRIVATE_KEY") as Hex | undefined;
+const minter =
+  sponsorAddress === owner.account.address.toLowerCase()
+    ? owner.account
+    : sponsorKey && privateKeyToAccount(sponsorKey).address.toLowerCase() === sponsorAddress
+      ? privateKeyToAccount(sponsorKey)
+      : undefined;
+if (!minter) throw new Error(`KleosUSD's sponsor is ${sponsorAddress}, and its key isn't in contracts/.env.demo.`);
 
 type Persona = { name: string; r: number; resolved: number; cash: number; bets: [number, boolean, number, string?][] };
 
@@ -78,9 +91,9 @@ for (const [i, p] of PERSONAS.entries()) {
   const a = w.account.address;
   if ((await social.read.nameOf([a])) !== p.name) {
     await kleos.write.seedReputation([a, parseEther(String(p.r)), p.resolved], { account: owner.account });
-    await usd.write.sponsorMint([a, usdAmount(Math.min(p.cash, 1000))], { account: owner.account });
+    await usd.write.sponsorMint([a, usdAmount(Math.min(p.cash, 1000))], { account: minter });
     for (let extra = p.cash - 1000; extra > 0; extra -= 1000) {
-      await usd.write.sponsorMint([a, usdAmount(Math.min(extra, 1000))], { account: owner.account });
+      await usd.write.sponsorMint([a, usdAmount(Math.min(extra, 1000))], { account: minter });
     }
     await social.write.setName([p.name], { account: w.account });
   }
@@ -128,15 +141,15 @@ const traders = [...wallets.slice(0, 6), ...extras];
 for (const j of jurors) {
   await kleos.write.seedReputation([j.account.address, parseEther("40"), 12], { account: owner.account });
   await kleos.write.joinCourt({ account: j.account });
-  await usd.write.sponsorMint([j.account.address, usdAmount(100)], { account: owner.account }); // bonds for proposing
+  await usd.write.sponsorMint([j.account.address, usdAmount(100)], { account: minter }); // bonds for proposing
 }
-for (const e of extras) await usd.write.sponsorMint([e.account.address, usdAmount(1000)], { account: owner.account });
+for (const e of extras) await usd.write.sponsorMint([e.account.address, usdAmount(1000)], { account: minter });
 console.log(`Jury pool: ${jurors.length} tier-V jurors`);
 
 const me = process.env.KLEOS_ME as Address | undefined;
 if (me) {
   await kleos.write.seedReputation([me, parseEther("20"), 10], { account: owner.account }); // tier IV: can propose
-  await usd.write.sponsorMint([me, usdAmount(1000)], { account: owner.account });
+  await usd.write.sponsorMint([me, usdAmount(1000)], { account: minter });
   await publicClient.waitForTransactionReceipt({ hash: await owner.sendTransaction({ to: me, value: parseEther(LOCAL ? "1" : "0.05") }) });
   console.log(`Demo reputation for ${me}: R = 20`);
 }
