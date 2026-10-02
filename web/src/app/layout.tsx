@@ -16,7 +16,9 @@ export const metadata: Metadata = {
 
 export default function RootLayout({ children }: LayoutProps<"/">) {
   return (
-    <html lang="en" className={`${doto.variable} ${grotesk.variable} ${plexMono.variable} antialiased`}>
+    // Browser extensions add attributes to <html> before React loads (e.g. data-google-analytics-opt-out).
+    // This only silences attribute mismatches on this one element; the rest of the tree is still checked.
+    <html lang="en" className={`${doto.variable} ${grotesk.variable} ${plexMono.variable} antialiased`} suppressHydrationWarning>
       <body className="flex min-h-dvh flex-col">
         <Providers>
           <Suspense>

@@ -107,8 +107,14 @@ export function AccountProvider({ children }: { children: React.ReactNode }) {
     if (!target) return;
     setFunding(true);
     const run = fetch("/api/sponsor", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ address: target }) })
-      .then(() => undefined)
-      .catch(() => undefined)
+      .then(async (res) => {
+        if (res.ok) return;
+        // Say why instead of failing silently: not configured, a budget hit, or a failed send.
+        const body = (await res.json().catch(() => null)) as { error?: string } | null;
+        const reason = (body?.error ?? `the server answered ${res.status}`).replace(/\.$/, "");
+        setError(`Couldn't add test money: ${reason}.`);
+      })
+      .catch(() => setError("Couldn't reach the server to add test money. Check your connection and try again."))
       .finally(() => setFunding(false));
     fundingPromise.current = run;
     return run;
