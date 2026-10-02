@@ -12,8 +12,8 @@ import { privateKeyToAccount } from "viem/accounts";
 import { chain, publicClient, USD_ADDRESS } from "@/lib/chain";
 import { kleosUsdAbi } from "@/lib/abi";
 
-const GAS_FLOOR = parseEther("0.03");
-const GAS_TOP_UP = parseEther("0.1"); // ~5 bets at testnet gas prices
+const GAS_FLOOR = parseEther("0.06"); // about two bets: below it, an account can't dispute or settle
+const GAS_TOP_UP = parseEther("0.3"); // ~10 bets, or settling a market of 11, at ~100 gwei (Monad charges the gas limit)
 const USD_FLOOR = parseUnits("50", 6);
 const USD_TOP_UP = parseUnits("1000", 6);
 

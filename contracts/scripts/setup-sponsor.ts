@@ -18,7 +18,9 @@ const deployed = JSON.parse(readFileSync(`ignition/deployments/chain-${chainId}/
 const usd = await viem.getContractAt("KleosUSD", deployed["KleosModule#KleosUSD"] as Address);
 const [owner] = await viem.getWalletClients();
 
-const FUNDING = parseEther(process.env.KLEOS_SPONSOR_MON ?? "0.5");
+// Each new passkey account gets 0.3 MON (web/src/app/api/sponsor/route.ts), and re-seeding mints
+// through this wallet (~0.5 MON of gas). 2 MON covers about five accounts plus a re-seed.
+const FUNDING = parseEther(process.env.KLEOS_SPONSOR_MON ?? "2");
 
 let key = demoSecret("SPONSOR_PRIVATE_KEY") as Hex | undefined;
 if (!key) {
