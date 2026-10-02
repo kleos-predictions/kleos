@@ -85,7 +85,7 @@ export function SameBetDifferentWeight() {
   ];
   const X0 = 200, X1 = 420, scale = 0.45; // px per $, the same in both columns
   return (
-    <svg viewBox="0 0 640 250" className="h-auto w-full" role="img" aria-label="Two traders each bet 100 dollars. Both count 100 in the money price; in the reputation price the newcomer counts 100 and the sharp counts 300. Both get the same payout per dollar.">
+    <svg viewBox="0 0 640 286" className="h-auto w-full" role="img" aria-label="Two traders each bet 100 dollars. Both count 100 in the money price; in the reputation price the newcomer counts 100 and the sharp counts 300. The newcomer gets the same payout per dollar and earns reputation for calls they get right; the sharp gets a 3 times voice in the reputation price and a bigger bonus share.">
       <Label x={X0} y={24} fill={C.lavender}>Money price weight</Label>
       <Label x={X1} y={24} fill={C.accent}>Reputation price weight</Label>
       {rows.map((row, i) => {
@@ -103,8 +103,10 @@ export function SameBetDifferentWeight() {
         );
       })}
       <line x1={14} x2={626} y1={214} y2={214} stroke={C.line} />
-      <Note x={14} y={238} fill={C.ink} size={13}>Same $100 in, same payout per dollar out.</Note>
-      <Note x={626} y={238} anchor="end" size={13}>Reputation changes the signal, not the money.</Note>
+      <Label x={14} y={240} fill={C.muted} size={10}>Newcomer gets</Label>
+      <Note x={130} y={240} fill={C.ink} size={12}>Same payout per dollar as anyone from bet one, plus reputation for every right call.</Note>
+      <Label x={14} y={268} fill={C.accent} size={10}>Sharp gets</Label>
+      <Note x={130} y={268} fill={C.ink} size={12}>A 3× voice in the reputation price everyone sees, and a bigger share of the bonus.</Note>
     </svg>
   );
 }
@@ -330,7 +332,7 @@ export function PayoutSplit() {
 export function NoSetup() {
   const never = ["Wallet extension", "Seed phrase", "Buying gas"];
   return (
-    <svg viewBox="0 0 640 170" className="h-auto w-full" role="img" aria-label="No wallet extension, no seed phrase, no gas to buy: one touch with a passkey places the first bet.">
+    <svg viewBox="0 0 640 214" className="h-auto w-full" role="img" aria-label="No wallet extension, no seed phrase, no gas to buy: one touch with a passkey places the first bet, on Monad with 300 millisecond blocks, 600 millisecond finality, near-zero fees and full EVM.">
       {never.map((n, i) => {
         const y = 30 + i * 42;
         return (
@@ -353,6 +355,15 @@ export function NoSetup() {
       <Note x={470} y={146} anchor="middle" fill={C.ink} size={13}>First bet placed</Note>
       <Note x={530} y={80} size={11}>gas and test USD</Note>
       <Note x={530} y={96} size={11}>are sponsored</Note>
+      {/* Why it feels instant: Monad's own figures (monad.xyz). */}
+      <rect x={14} y={172} width={612} height={34} rx={10} fill={C.alt} />
+      <Label x={28} y={194} fill={C.accent} size={10}>On Monad</Label>
+      {([["300 ms", "blocks"], ["600 ms", "finality"], ["near-zero", "fees"], ["full", "EVM"]] as const).map(([v, l], i) => (
+        <g key={l}>
+          <text x={120 + i * 128} y={194} fill={C.ink} fontSize={12} className="font-mono">{v}</text>
+          <Label x={120 + i * 128 + v.length * 7.6 + 8} y={194} size={10}>{l}</Label>
+        </g>
+      ))}
     </svg>
   );
 }

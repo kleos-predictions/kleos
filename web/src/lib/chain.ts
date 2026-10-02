@@ -21,7 +21,7 @@ export const USD_ADDRESS = process.env.NEXT_PUBLIC_USD_ADDRESS as Address | unde
 export const SOCIAL_ADDRESS = process.env.NEXT_PUBLIC_SOCIAL_ADDRESS as Address | undefined;
 export const IS_LIVE = Boolean(KLEOS_ADDRESS && USD_ADDRESS);
 
-// Monad produces a block every ~400 ms; viem's default 4 s polling would add seconds to every confirmation.
+// Monad produces a block every ~300 ms (monad.xyz); viem's default 4 s polling would add seconds to every confirmation.
 export const POLLING_MS = 250;
 // On the server, MONAD_RPC_URL (a private node, never sent to the browser) replaces the public RPC.
 const serverRpc = typeof window === "undefined" && !IS_LOCAL_CHAIN ? process.env.MONAD_RPC_URL : undefined;

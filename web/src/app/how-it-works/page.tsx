@@ -34,9 +34,9 @@ const WHY = [
 ];
 
 const STACK = [
-  ["Chain", "Monad testnet · EVM, ~400 ms blocks, cheap enough to log every reputation change"],
+  ["Chain", "Monad testnet · full EVM, 300 ms blocks, 600 ms finality and near-zero fees, cheap enough to log every reputation change"],
   ["Contracts", "Kleos.sol (markets, weighting, payouts, reputation, Kleos Court) · KleosSocial.sol (usernames, follows, votes on calls) · KleosUSD.sol (test stablecoin)"],
-  ["Accounts", "Mera passkeys: no wallet, no extension, no seed phrase. The account is derived from the passkey on any device; nothing secret is stored. Gas and test USD are sponsored, so a first bet is one transaction"],
+  ["Accounts", "Mera passkeys (our entry for Best Mera-Powered UX on Monad): no wallet, no extension, no seed phrase. The account is derived from the passkey on any device; nothing secret is stored. Gas and test USD are sponsored, so a first bet is one transaction"],
   ["Sessions", "Prompt-free while unlocked: bets up to $100, follows, votes, settling. The passkey is asked again for bigger bets, bonds, jury votes and the recovery phrase. 15 idle minutes lock the account"],
   ["Verifiability", "ReputationChanged(user, marketId, delta, newR, entryPrice, side, outcome) on every update"],
   ["Market creation", "The team, or any tier-V trader (R ≥ 36) with a $25 bond plus a $2 fee. The bond comes back on a clean resolution and is lost if the court rules the question ambiguous. Creators can't propose the outcome or sit on the jury"],
@@ -140,6 +140,7 @@ export default function HowItWorks() {
         <p className="max-w-[720px] text-xl leading-relaxed text-muted md:text-2xl">
           A prediction market with a verifiable reputation layer. Every bet weighs{" "}
           <span className="text-ink">money × reputation</span>, and reputation only comes from being right when the crowd was wrong.
+          When an outcome is contested, the Kleos Court settles it: five jurors with no stake, voting in secret.
         </p>
         <figure className="card mt-4 flex flex-col gap-3 p-5 md:p-7">
           <span className="lbl">Same bet, different weight</span>
@@ -249,7 +250,7 @@ export default function HowItWorks() {
         <h2 id="tech" className="font-dot text-[28px] font-black md:text-[36px]">TECH FOOTPRINT</h2>
         <div className="grid gap-6">
           <figure className="card flex flex-col gap-3 p-6">
-            <span className="lbl">Accounts · nothing to set up</span>
+            <span className="lbl">Accounts · nothing to set up · built with Mera</span>
             <NoSetup />
           </figure>
           <figure className="card flex flex-col gap-3 p-6">
