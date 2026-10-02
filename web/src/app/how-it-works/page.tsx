@@ -1,5 +1,7 @@
 import type { Metadata } from "next";
 import { FormulaLab } from "@/components/formula-lab";
+import { CourtStepper } from "@/components/court-stepper";
+import { FailureGlyph, KleosLoop, MoneyFlow, PasskeyFlow, VerifyPipeline } from "@/components/how-illustrations";
 import { LaurelBadge } from "@/components/laurel";
 import { PARAMS } from "@/lib/math";
 import { TIER_NAMES, TIER_THRESHOLDS } from "@/lib/tiers";
@@ -51,6 +53,8 @@ const EVENTS = [
   "MarketCreated", "BetPlaced", "RevenueAccrued", "CallPosted", "OutcomeProposed", "OutcomeDisputed", "JuryDrawn", "VoteRevealed", "Verdict",
   "MarketResolved", "Settled", "ReputationChanged", "Followed", "CallVoted", "NameSet",
 ];
+
+const GLYPHS = ["capture", "conflict", "distortion", "insider"] as const;
 
 const FAILURES = [
   {
@@ -138,6 +142,10 @@ export default function HowItWorks() {
           A prediction market with a verifiable reputation layer. Every bet weighs{" "}
           <span className="text-ink">money × reputation</span>, and reputation only comes from being right when the crowd was wrong.
         </p>
+        <figure className="card mt-4 flex flex-col gap-2 p-4 md:p-6">
+          <KleosLoop />
+          <figcaption className="lbl text-center">One loop: every resolved bet feeds the weight of the next one</figcaption>
+        </figure>
       </header>
 
       <section className="flex flex-col gap-6" aria-labelledby="why-kleos">
@@ -155,6 +163,9 @@ export default function HowItWorks() {
                   {f.date}
                 </span>
                 <Status live={f.live} />
+              </div>
+              <div className="rounded-[12px] bg-card-alt px-4 py-3">
+                <FailureGlyph kind={GLYPHS[i]} />
               </div>
               <h3 className="text-[21px] font-medium">{f.title}</h3>
               <p className="leading-relaxed text-muted">
@@ -220,8 +231,38 @@ export default function HowItWorks() {
         <FormulaLab />
       </section>
 
+      <section className="flex flex-col gap-6" aria-labelledby="close-to-payout">
+        <div className="flex flex-col gap-2">
+          <h2 id="close-to-payout" className="font-dot text-[28px] font-black md:text-[36px]">FROM CLOSE TO PAYOUT</h2>
+          <p className="text-muted">Who decides the outcome, and where the money goes once it&apos;s decided.</p>
+        </div>
+        <div className="grid gap-6 lg:grid-cols-2">
+          <article className="card flex flex-col gap-4 p-6">
+            <span className="lbl">The Kleos Court · step through a dispute</span>
+            <CourtStepper />
+          </article>
+          <article className="card flex flex-col gap-4 p-6">
+            <span className="lbl">Money pays money · a $1,000 losing side</span>
+            <MoneyFlow />
+            <p className="text-sm leading-relaxed text-muted">
+              Winners split the losers&apos; money by stake, like any pool. Reputation never takes anyone&apos;s money: it only shares the 2% bonus.
+            </p>
+          </article>
+        </div>
+      </section>
+
       <section className="flex flex-col gap-6" aria-labelledby="tech">
         <h2 id="tech" className="font-dot text-[28px] font-black md:text-[36px]">TECH FOOTPRINT</h2>
+        <div className="grid gap-6 lg:grid-cols-2">
+          <figure className="card flex flex-col gap-3 p-6">
+            <span className="lbl">Accounts · one touch to bet</span>
+            <PasskeyFlow />
+          </figure>
+          <figure className="card flex flex-col gap-3 p-6">
+            <span className="lbl">Verifiability · chain → Envio → profile</span>
+            <VerifyPipeline />
+          </figure>
+        </div>
         <div className="card divide-y divide-line">
           {STACK.map(([k, v]) => (
             <div key={k} className="grid gap-2 p-5 md:grid-cols-[180px_1fr] md:gap-6">
