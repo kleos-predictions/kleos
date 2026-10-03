@@ -2,6 +2,8 @@
 
 How contract events become the data the app reads. Solid lines are built; dashed lines are planned.
 
+Audit update, 2026-10-02: `BonusClaim`, `Vesting`, `Slash`, `OwnershipChange` and `ContractConfiguration` are now built. Claim state includes zero/non-position claims. Seed/reseed counts and current commitments use validated direct transaction input; omitted nested input is nullable unknown with provenance. Vest deadlines use recovered constructor parameters or the verified immutable snapshot for the exact deployed testnet address. Both integration suites pin comparisons to their indexed end block and count skipped fields. The historical diagrams below show the original core layout; current field details are in `schema.graphql`.
+
 ## 1. The big picture
 
 ```mermaid
@@ -184,7 +186,7 @@ flowchart LR
 
 KleosSocial doesn't check that a call exists, so a vote can arrive before its `CallPosted`. The `CallPosted` handler counts the votes already stored. Social data never touches money or reputation.
 
-Not indexed on purpose: `OwnershipTransferred`. Nothing in the app shows the owner.
+`OwnershipTransferred` is now indexed, because the owner affects eligibility exceptions even when no screen displays it.
 
 ## 4. The entities
 

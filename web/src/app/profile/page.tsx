@@ -3,12 +3,12 @@
 import { useEffect } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useAccount } from "wagmi";
+import { useKleosAccount } from "@/components/account";
 import { TRADERS } from "@/lib/data";
 import { LaurelBadge } from "@/components/laurel";
 
 export default function MyProfile() {
-  const { address } = useAccount();
+  const { address } = useKleosAccount();
   const router = useRouter();
   useEffect(() => {
     if (address) router.replace(`/profile/${address}`);

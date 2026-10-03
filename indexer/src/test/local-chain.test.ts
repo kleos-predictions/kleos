@@ -36,13 +36,14 @@ const found = await findContracts();
 const none: Contract = { address: "0x", abi: [] };
 const { kleos, social } = found ?? { kleos: none, social: none };
 
-const read = <T>(c: { address: Address; abi: Abi }, functionName: string, args: unknown[] = []) =>
-  client.readContract({ ...c, functionName, args }) as Promise<T>;
-
 describe.skipIf(!found)("seeded local chain", () => {
   it("indexed markets, traders and calls match the contracts", async (t) => {
+    const blockNumber = await client.getBlockNumber();
+    const read = <T>(c: Contract, functionName: string, args: unknown[] = []) =>
+      client.readContract({ ...c, functionName, args, blockNumber }) as Promise<T>;
     const indexer = createTestIndexer();
-    await indexer.process({ chains: { 31337: { startBlock: 0, endBlock: Number(await client.getBlockNumber()) } } });
+    await indexer.process({ chains: { 31337: { startBlock: 0, endBlock: Number(blockNumber) } } });
+    const coverage = { historyChecked: 0, historyUnknown: 0, deadlineChecked: 0, deadlineUnknown: 0, commitCountsChecked: 0, commitCountsUnknown: 0, claimStatesChecked: 0 };
 
     // Markets: pools, prices and distinct bettors.
     const count = await read<bigint>(kleos, "marketCount");
@@ -64,10 +65,20 @@ describe.skipIf(!found)("seeded local chain", () => {
     const traders = await indexer.Trader.getAll();
     t.expect(traders.length).toBeGreaterThan(0);
     for (const tr of traders) {
-      const rep = await read<{ r: bigint; pending: bigint; flagged: boolean; resolvedBets: number }>(kleos, "reputation", [tr.id]);
+      const rep = await read<{ r: bigint; pending: bigint; vestAt: bigint; flagged: boolean; resolvedBets: number }>(kleos, "reputation", [tr.id]);
       t.expect({ r: tr.r, pending: tr.pending, flagged: tr.flagged }, `trader ${tr.id}`).toEqual({ r: rep.r, pending: rep.pending, flagged: rep.flagged });
-      // Seeds set resolvedBets without an event, so the index can only undercount it.
-      t.expect(tr.resolvedBets).toBeLessThanOrEqual(rep.resolvedBets);
+      if (tr.resolvedBets === undefined) {
+        coverage.historyUnknown++;
+        t.expect(tr.resolvedBetsSource).toBe("Unknown");
+      } else {
+        coverage.historyChecked++;
+        t.expect(tr.resolvedBets, `trader ${tr.id} exact history`).toBe(BigInt(rep.resolvedBets));
+      }
+      if (tr.vestAt === undefined) coverage.deadlineUnknown++;
+      else {
+        coverage.deadlineChecked++;
+        t.expect(tr.vestAt, `trader ${tr.id} vest deadline`).toBe(rep.vestAt);
+      }
     }
 
     // Resolution and settlement: state, outcome, bonus pot and each settled position.
@@ -82,11 +93,13 @@ describe.skipIf(!found)("seeded local chain", () => {
       const positions = await indexer.Position.getWhere({ market_id: { _eq: m.id } });
       for (const pos of positions) {
         const user = pos.trader_id;
-        const [isSettled, weight] = await Promise.all([
+        const [isSettled, weight, claimed] = await Promise.all([
           read<boolean>(kleos, "settled", [BigInt(m.id), user]),
           read<bigint>(kleos, "bonusWeight", [BigInt(m.id), user]),
+          read<boolean>(kleos, "bonusClaimed", [BigInt(m.id), user]),
         ]);
-        t.expect([pos.settled, pos.bonusWeight], `position ${pos.id}`).toEqual([isSettled, weight]);
+        t.expect([pos.settled, pos.bonusWeight, pos.bonusClaimed], `position ${pos.id}`).toEqual([isSettled, weight, claimed]);
+        coverage.claimStatesChecked++;
       }
     }
 
@@ -101,9 +114,12 @@ describe.skipIf(!found)("seeded local chain", () => {
           Promise.all(jury.map((j) => read<`0x${string}`>(kleos, "commitments", [BigInt(m.id), r, j]))),
           Promise.all(jury.map((j) => read<number>(kleos, "votes", [BigInt(m.id), r, j]))),
         ]);
-        t.expect([round.commits, round.reveals], `round ${round.id} commits, reveals`).toEqual([
-          commits.filter((c) => BigInt(c) !== 0n).length, votes.filter((v) => v !== 0).length,
-        ]);
+        if (round.commits === undefined) coverage.commitCountsUnknown++;
+        else {
+          coverage.commitCountsChecked++;
+          t.expect(round.commits, `round ${round.id} current commitments`).toBe(commits.filter((c) => BigInt(c) !== 0n).length);
+        }
+        t.expect(round.reveals, `round ${round.id} reveals`).toBe(votes.filter((v) => v !== 0).length);
         // A round is failed when a later one was drawn, or when the court voided the market without a verdict.
         t.expect(round.failed, `round ${round.id} failed`).toBe(r < court.round || (m.voided && m.verdict === undefined));
       }
@@ -117,12 +133,17 @@ describe.skipIf(!found)("seeded local chain", () => {
 
     // Calls: one per CallPosted, keyed by the contract's callId, which KleosSocial votes use too.
     const calls = await indexer.Call.getAll();
-    const logs = await client.getContractEvents({ ...kleos, eventName: "CallPosted", fromBlock: 0n });
+    const logs = await client.getContractEvents({ ...kleos, eventName: "CallPosted", fromBlock: 0n, toBlock: blockNumber });
     const expected = logs.map((l) => (l.args as { callId: bigint }).callId.toString());
     t.expect(calls.map((c) => c.id).sort()).toEqual(expected.sort());
     // The seed votes on its calls; with matching ids those votes are visible.
     const [ups, downs] = await read<[bigint[], bigint[], number[]]>(social, "tallies", [calls.map((c) => BigInt(c.id)), kleos.address]);
     t.expect(ups.some((u) => u > 0n) && downs.some((d) => d > 0n), "seeded votes land on indexed call ids").toBe(true);
     t.expect(calls.map((c) => [c.ups, c.downs])).toEqual(calls.map((_, i) => [Number(ups[i]), Number(downs[i])]));
+    for (const claim of await indexer.BonusClaim.getAll()) {
+      t.expect(await read<boolean>(kleos, "bonusClaimed", [BigInt(claim.market_id), claim.trader_id]), `claim ${claim.id}`).toBe(true);
+      t.expect(await read<bigint>(kleos, "bonusOf", [BigInt(claim.market_id), claim.trader_id]), `claim ${claim.id} amount`).toBe(claim.amount);
+    }
+    console.log(`Pinned local reconciliation at block ${blockNumber}: ${JSON.stringify(coverage)}`);
   }, 120_000);
 });

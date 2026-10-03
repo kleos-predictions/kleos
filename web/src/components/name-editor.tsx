@@ -1,12 +1,13 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { BaseError, ContractFunctionRevertedError } from "viem";
-import { SOCIAL_ADDRESS, chain, publicClient } from "@/lib/chain";
+import { BaseError, ContractFunctionRevertedError, encodeFunctionData } from "viem";
+import { SOCIAL_ADDRESS, chain } from "@/lib/chain";
 import { kleosSocialAbi } from "@/lib/abi";
 import { describeAccountError } from "@/lib/mera";
 import { useKleosAccount } from "./account";
+import { PendingTransactionNotice, usePendingTransaction } from "./pending-transaction";
 
 const VALID = /^[a-z0-9_]{3,20}$/;
 
@@ -18,6 +19,9 @@ export function NameEditor({ current }: { current?: string }) {
   const [value, setValue] = useState(current ?? "");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const inFlight = useRef(false);
+  const transaction = usePendingTransaction(`name:${SOCIAL_ADDRESS}`);
+  const pendingNotice = <PendingTransactionNotice transaction={transaction} onCheck={() => { void transaction.check().then(() => { transaction.complete(); setOpen(false); router.refresh(); }).catch(e => setError(describeAccountError(e))); }} />;
 
   if (!SOCIAL_ADDRESS) return null;
 
@@ -26,19 +30,22 @@ export function NameEditor({ current }: { current?: string }) {
       Edit username
     </button>
   );
-  if (!open) return trigger;
+  if (!open) return <>{trigger}{pendingNotice}{error && <p role="alert" className="text-sm text-muted">{error}</p>}</>;
 
   async function save() {
+    if (inFlight.current || transaction.hasPending()) return;
     const name = value.trim().toLowerCase();
     if (!VALID.test(name)) return setError("3–20 characters: a–z, 0–9 and _");
-    const client = await account.authorize(); // first await: may show the passkey prompt
-    if (!client?.account) return;
+    inFlight.current = true;
     setBusy(true);
     setError(null);
     try {
-      await account.whenFunded();
+      const client = await account.authorize(); // first await: may show the passkey prompt
+      if (!client?.account) return;
+      await account.whenFunded(client.account.address);
       const hash = await client.writeContract({ account: client.account, chain, address: SOCIAL_ADDRESS!, abi: kleosSocialAbi, functionName: "setName", args: [name] });
-      await publicClient.waitForTransactionReceipt({ hash });
+      await transaction.confirm(hash, { sender: client.account.address, to: SOCIAL_ADDRESS!, data: encodeFunctionData({ abi: kleosSocialAbi, functionName: "setName", args: [name] }) });
+      transaction.complete();
       setOpen(false);
       router.refresh();
     } catch (e) {
@@ -46,6 +53,7 @@ export function NameEditor({ current }: { current?: string }) {
       const reason = revert instanceof ContractFunctionRevertedError ? revert.data?.errorName : undefined;
       setError(reason === "NameTaken" ? "That username is taken." : reason === "BadName" ? "3–20 characters: a–z, 0–9 and _" : describeAccountError(e));
     } finally {
+      inFlight.current = false;
       setBusy(false);
     }
   }
@@ -53,6 +61,7 @@ export function NameEditor({ current }: { current?: string }) {
   return (
     <>
       {trigger}
+      {pendingNotice}
       <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4" onClick={() => setOpen(false)}>
         <form
           role="dialog"
@@ -85,7 +94,7 @@ export function NameEditor({ current }: { current?: string }) {
             <button type="button" className="btn btn-no" onClick={() => setOpen(false)}>
               Cancel
             </button>
-            <button className="btn btn-yes" disabled={busy}>
+            <button className="btn btn-yes" disabled={busy || Boolean(transaction.pending)}>
               {busy ? "Saving…" : "Save"}
             </button>
           </div>

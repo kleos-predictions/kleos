@@ -219,7 +219,7 @@ describe("reputation", () => {
       marketResolved(true, 80, 0n, 1n), marketResolved(true, 81, 0n, 2n), marketResolved(true, 82, 0n, 3n), marketVoided(83, 4n),
       settled(me, 90, 0, usd(196), 1n), settled(me, 91, 0, 0n, 2n), settled(me, 92, 0, 0n, 3n), settled(me, 93, 0, usd(100), 4n),
     ]);
-    t.expect((await indexer.Trader.getOrThrow(me.toLowerCase())).resolvedBets).toBe(1);
+    t.expect((await indexer.Trader.getOrThrow(me.toLowerCase())).resolvedBets).toBe(1n);
     t.expect(await indexer.Position.getOrThrow(positionId(1n, me))).toMatchObject({ settled: true, payout: usd(196) });
   });
 
@@ -238,7 +238,7 @@ describe("reputation", () => {
       settled(small, 31, 0), settled(hedged, 31, 1), settled(full, 31, 2),
     ]);
     const counted = async (a: string) => (await indexer.Trader.getOrThrow(a.toLowerCase())).resolvedBets;
-    t.expect([await counted(small), await counted(hedged), await counted(full)]).toEqual([0, 1, 1]);
+    t.expect([await counted(small), await counted(hedged), await counted(full)]).toEqual([0n, 1n, 1n]);
   });
 
   it("an admin slash is recorded on the trader, and its ReputationChanged sets R", async (t) => {

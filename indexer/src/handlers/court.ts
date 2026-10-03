@@ -1,6 +1,7 @@
 // Kleos Court: the juror pool, jury draws, hidden commits, reveals and verdicts.
-import { indexer, type EvmOnEventContext } from "envio";
+import { indexer, type EvmOnEventContext, type CourtRound, type JurorVote } from "envio";
 import { addressId, getProtocol, getTrader, roundId, seatId } from "../utils.js";
+import { voteCommitment } from "../transaction-input.js";
 
 const VOTE_YES = 1;
 const VOTE_NO = 2;
@@ -44,6 +45,7 @@ indexer.onEvent(
       jurors: jurors.map(addressId),
       drawnAt: event.block.timestamp,
       commits: 0,
+      commitEvents: 0,
       reveals: 0,
       yes: 0,
       no: 0,
@@ -54,21 +56,37 @@ indexer.onEvent(
     for (const juror of jurors) {
       const trader = await getTrader(context, juror);
       context.Trader.set({ ...trader, juryDuties: trader.juryDuties + 1 });
-      context.JurorVote.set({ id: seatId(marketId, round, juror), round_id: id, juror_id: trader.id, committed: false, vote: 0 });
+      context.JurorVote.set({
+        id: seatId(marketId, round, juror), round_id: id, juror_id: trader.id,
+        committed: false, commitment: undefined, commitmentSource: "Genesis", vote: 0,
+      });
     }
   },
 );
 
-// A juror can re-commit before the deadline; only the first commit counts toward `commits`.
-indexer.onEvent({ contract: "Kleos", event: "VoteCommitted" }, async ({ event, context }) => {
+async function currentCommits(context: EvmOnEventContext, round: CourtRound, updated: JurorVote) {
+  const seats = await context.JurorVote.getWhere({ round_id: { _eq: round.id } });
+  const states = seats.map((s) => s.id === updated.id ? updated.committed : s.committed);
+  return states.some((s) => s === undefined) ? undefined : states.filter((s) => s === true).length;
+}
+
+// A juror can replace a commitment, including replacing it with zero in the deployed contract.
+// This counts current nonzero storage, rather than assuming every event means "committed".
+indexer.onEvent({ contract: "Kleos", event: "VoteCommitted", fields: { transaction: ["input", "to", "from"] } }, async ({ event, context }) => {
   const { marketId, round, juror } = event.params;
   const [seat, r] = await Promise.all([
     context.JurorVote.get(seatId(marketId, round, juror)),
     context.CourtRound.get(roundId(marketId, round)),
   ]);
-  if (!seat || !r || seat.committed) return;
-  context.JurorVote.set({ ...seat, committed: true });
-  context.CourtRound.set({ ...r, commits: r.commits + 1 });
+  if (!seat || !r) return;
+  const commitment = voteCommitment(event);
+  const updated: JurorVote = {
+    ...seat, commitment, committed: commitment === undefined ? undefined : BigInt(commitment) !== 0n,
+    commitmentSource: commitment === undefined ? "Unknown" : "DirectInput",
+  };
+  const commits = await currentCommits(context, r, updated);
+  context.JurorVote.set(updated);
+  context.CourtRound.set({ ...r, commits, commitEvents: r.commitEvents + 1 });
 });
 
 indexer.onEvent({ contract: "Kleos", event: "VoteRevealed" }, async ({ event, context }) => {
@@ -79,9 +97,15 @@ indexer.onEvent({ contract: "Kleos", event: "VoteRevealed" }, async ({ event, co
   ]);
   if (!seat || !r) return;
   const v = Number(vote);
-  context.JurorVote.set({ ...seat, vote: v });
+  const updated: JurorVote = {
+    ...seat, vote: v, committed: true,
+    commitmentSource: seat.commitmentSource === "DirectInput" ? "DirectInput" : "Reveal",
+  };
+  const commits = await currentCommits(context, r, updated);
+  context.JurorVote.set(updated);
   context.CourtRound.set({
     ...r,
+    commits,
     reveals: r.reveals + 1,
     yes: r.yes + (v === VOTE_YES ? 1 : 0),
     no: r.no + (v === VOTE_NO ? 1 : 0),

@@ -2,7 +2,7 @@
 
 import { useRef, useState } from "react";
 import type { PricePoint } from "@/lib/data";
-import { smoothPath } from "@/lib/path";
+import { linearPath } from "@/lib/path";
 
 const W = 800;
 const H = 280;
@@ -12,9 +12,10 @@ export function DottedLineChart({ points }: { points: PricePoint[] }) {
   const ref = useRef<SVGSVGElement>(null);
   const [hover, setHover] = useState<number | null>(null);
 
-  const x = (i: number) => PAD.l + (i / (points.length - 1)) * (W - PAD.l - PAD.r);
+  const x = (i: number) => PAD.l + (i / Math.max(points.length - 1, 1)) * (W - PAD.l - PAD.r);
   const y = (v: number) => PAD.t + (1 - v) * (H - PAD.t - PAD.b);
-  const line = (key: "rep" | "money") => smoothPath(points.map((p, i) => [x(i), y(p[key])]));
+  const line = (key: "rep" | "money") => linearPath(points.map((p, i) => [x(i), y(p[key])]));
+  if (points.length === 0) return <p className="lbl">Price history unavailable.</p>;
 
   function onMove(e: React.PointerEvent) {
     const box = ref.current!.getBoundingClientRect();

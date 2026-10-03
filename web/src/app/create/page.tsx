@@ -11,8 +11,8 @@ export default function CreatePage() {
           ASK THE QUESTION<span className="cursor-blink text-accent">_</span>
         </h1>
         <p className="text-lg leading-relaxed text-muted">
-          On other platforms, the platform decides what you can bet on. On Kleos, the traders who&apos;ve proven they&apos;re right earn the
-          right to ask. Whoever writes the question never resolves it.
+          The team and eligible tier-V addresses can create markets. Tier V is an R threshold, not a verified skill credential.
+          Creators publish fixed criteria before bets. The owner has a narrow proposal exception on its own unbet markets.
         </p>
       </header>
       <CreateMarketForm />

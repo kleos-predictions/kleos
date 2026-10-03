@@ -232,6 +232,7 @@ contract Kleos {
     error NotEligibleResolver();
     error NotEligibleCreator();
     error BadCloseTime();
+    error BadMarketText();
     error NotEligibleJuror();
     error NotJuror();
     error BadVote();
@@ -245,6 +246,7 @@ contract Kleos {
     error BonusNotOpen();
     error AlreadyClaimed();
     error TransferFailed();
+    error BadPagination();
 
     modifier onlyOwner() {
         if (msg.sender != owner) revert NotOwner();
@@ -252,6 +254,7 @@ contract Kleos {
     }
 
     constructor(IERC20 usd_, uint256 disputeWindow, uint256 vestPeriod, uint256 nMin, uint256 courtPeriod) {
+        if (address(usd_) == address(0)) revert ZeroAddress();
         usd = usd_;
         owner = msg.sender;
         DISPUTE_WINDOW = disputeWindow;
@@ -265,8 +268,7 @@ contract Kleos {
     }
 
     // ─── Admin ─────────────────────────────────────────────────────────────────
-    /// @notice Categories are an allowlist. Blocked topics (military operations, internal
-    ///         government decisions) never get an id, so no market can be filed under them.
+    /// @notice Categories are an allowlist; semantic topic restrictions require curation.
     function addCategory(uint8 id, string calldata name) external onlyOwner {
         _addCategory(id, name);
     }
@@ -280,6 +282,7 @@ contract Kleos {
     ) external returns (uint256 id) {
         if (bytes(categoryName[category]).length == 0) revert BadCategory();
         if (closeTime <= block.timestamp) revert BadCloseTime();
+        if (!_hasMarketText(question) || !_hasMarketText(oracle) || !_hasMarketText(criteria)) revert BadMarketText();
         id = ++marketCount;
         Market storage m = _markets[id];
         m.creator = msg.sender;
@@ -298,6 +301,16 @@ contract Kleos {
         m.criteria = criteria;
         m.closeTime = closeTime;
         emit MarketCreated(id, msg.sender, question, category, oracle, criteria, closeTime);
+    }
+
+    /// @dev Rejects empty and ASCII whitespace-only metadata, without judging its meaning.
+    function _hasMarketText(string calldata value) private pure returns (bool) {
+        bytes calldata text = bytes(value);
+        for (uint256 i; i < text.length; ++i) {
+            uint8 c = uint8(text[i]);
+            if (c != 0x20 && (c < 0x09 || c > 0x0d)) return true;
+        }
+        return false;
     }
 
     /// @notice Demo-only starting state. Emitted as a public ReputationChanged with marketId 0.
@@ -634,6 +647,7 @@ contract Kleos {
         Court storage c = _courts[id];
         if (_markets[id].state != State.Disputed || block.timestamp >= c.commitEnd) revert WindowClosed();
         if (!_onJury(id, c.round, msg.sender)) revert NotJuror();
+        if (commitment == bytes32(0)) revert BadVote();
         commitments[id][c.round][msg.sender] = commitment;
         emit VoteCommitted(id, c.round, msg.sender);
     }
@@ -718,8 +732,7 @@ contract Kleos {
                 continue;
             }
             if (vote == verdict) {
-                rep.pending += JUROR_REWARD;
-                rep.vestAt = uint64(block.timestamp + VEST_PERIOD);
+                _addPending(j, rep, JUROR_REWARD);
                 emit ReputationChanged(j, id, int256(JUROR_REWARD), rep.r, rep.pending, 0, false, false);
             } else {
                 uint256 taken = _takeReputation(rep, JUROR_PENALTY);
@@ -822,10 +835,10 @@ contract Kleos {
         // Flagged accounts earn no bonus while under review.
         if (gain > loss && !rep.flagged) weight = ((gain - loss) * ((win.eff * WAD) / win.money)) / WAD;
         // Only full-size positions count toward activation, so it can't be bought with $1 bets.
-        if (win.money + lose.money >= STAKE_REF) rep.resolvedBets++;
+        if (win.money + lose.money >= STAKE_REF && rep.resolvedBets < type(uint32).max) rep.resolvedBets++;
     }
 
-    /// @dev Shallow markets can't move reputation, so it can't be farmed against your own wallets.
+    /// @dev Depth gates are per market and address; they do not establish independent ownership.
     function _countsForReputation(uint256 id, Market storage m) internal view returns (bool) {
         return m.yesMoney + m.noMoney >= MIN_REP_POOL && _bettors[id].length >= MIN_BETTORS;
     }
@@ -842,9 +855,7 @@ contract Kleos {
         uint256 p = pos.priceSum / pos.money;
         gain = (((K * _stakeFactor(pos.money)) / WAD) * (WAD - p)) / WAD;
         if (gain > DELTA_R_MAX) gain = DELTA_R_MAX;
-        // Gains wait VEST_PERIOD; a new gain restarts the clock for everything pending.
-        rep.pending += gain;
-        rep.vestAt = uint64(block.timestamp + VEST_PERIOD);
+        _addPending(user, rep, gain);
         emit ReputationChanged(user, id, int256(gain), rep.r, rep.pending, p, outcome, outcome);
     }
 
@@ -899,16 +910,29 @@ contract Kleos {
     }
 
     // ─── Vesting ───────────────────────────────────────────────────────────────
+    /// @dev A new gain cannot relock an already matured, unflagged balance.
+    ///      Immature or reviewed gains stay pending under the existing aggregate schedule.
+    function _addPending(address user, Rep storage rep, uint256 gain) internal {
+        if (gain == 0) return;
+        if (rep.pending > 0 && !rep.flagged && block.timestamp >= rep.vestAt) _vest(user, rep);
+        rep.pending += gain;
+        rep.vestAt = uint64(block.timestamp + VEST_PERIOD);
+    }
+
+    function _vest(address user, Rep storage rep) internal {
+        uint256 amount = rep.pending;
+        rep.pending = 0;
+        rep.r += amount;
+        emit Vested(user, amount, rep.r);
+    }
+
     /// @notice Moves pending gains into R once the vesting period has passed. Anyone can call it.
     function vest(address user) external {
         Rep storage rep = _rep[user];
         if (rep.pending == 0) revert NothingToVest();
         if (block.timestamp < rep.vestAt) revert StillVesting();
         if (rep.flagged) revert UnderReview();
-        uint256 amount = rep.pending;
-        rep.pending = 0;
-        rep.r += amount;
-        emit Vested(user, amount, rep.r);
+        _vest(user, rep);
     }
 
     // ─── Views ─────────────────────────────────────────────────────────────────
@@ -918,6 +942,32 @@ contract Kleos {
 
     function getBettors(uint256 id) external view returns (address[] memory) {
         return _bettors[id];
+    }
+
+    function bettorCount(uint256 id) external view returns (uint256) {
+        return _bettors[id].length;
+    }
+
+    /// @notice Bounded discovery for keepers and clients; legacy full-array getters remain available.
+    function getBettorsPage(uint256 id, uint256 offset, uint256 limit) external view returns (address[] memory) {
+        return _addressPage(_bettors[id], offset, limit);
+    }
+
+    function jurorCount() external view returns (uint256) {
+        return _jurorPool.length;
+    }
+
+    function jurorPoolPage(uint256 offset, uint256 limit) external view returns (address[] memory) {
+        return _addressPage(_jurorPool, offset, limit);
+    }
+
+    function _addressPage(address[] storage source, uint256 offset, uint256 limit) internal view returns (address[] memory page) {
+        if (limit == 0 || limit > 100) revert BadPagination();
+        if (offset >= source.length) return new address[](0);
+        uint256 length = source.length - offset;
+        if (length > limit) length = limit;
+        page = new address[](length);
+        for (uint256 i; i < length; ++i) page[i] = source[offset + i];
     }
 
     function getCourt(uint256 id) external view returns (Court memory) {

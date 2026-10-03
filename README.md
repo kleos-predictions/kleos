@@ -1,87 +1,56 @@
 # Kleos in Chaos
 
-**Testnet prototype.** This project uses test tokens and is not ready for production or real funds. Security review and live acceptance remain incomplete.
+A parimutuel prediction-market prototype with public calls and an experimental reputation layer, using nonredeemable kUSD on Monad testnet.
 
-## Prediction Market with a Verifiable Reputation Layer. Built on Monad testnet.
+Each market shows money and reputation-weighted pool shares. Principal payout depends on final money pools. Reputation also affects signal weight and bonus allocation; it is not yet a validated measure of independent forecasting skill.
 
-<img width="3000" height="1000" alt="image" src="https://github.com/user-attachments/assets/3f0683aa-7e7a-4590-9c67-e028b576fd30" />
+## Current status
 
+Security review is ongoing. Existing testnet contracts do not acquire source repairs automatically. This prototype is not ready for production or real funds.
 
-Every bet weighs money × reputation. Reputation only grows when you are right against the crowd, it shrinks faster than it grows, and every change is an on-chain event anyone can audit. Each market shows two prices: what the money says and what proven forecasters say.
+The full local contract and operator suite currently has **109 passing tests** (60 contract tests and 49 operator tests). The web has 48 regression tests; the indexer has 34 simulated tests passing, with two chain integrations skipped. Verification details are in the repair report. Tests do not certify commercial demand, physical passkey behavior or mechanism security.
 
-## Why Kleos
+## Implemented mechanics
 
-Prediction markets are failing in four specific ways. Each one has a direct answer in Kleos.
+- Activated multiplier: `min(1 + 0.5√R, 5)`, after a deployment-configured number of qualifying positions (ten in the recorded demo).
+- Winning principal: stake plus its money share of losing principal, after 2% bonus funding and 1% protocol fees. Void and no-winner markets refund principal.
+- Winning R gain: `min(k·min(stake/50, 1)·(1-p), 0.8)`, with entry p clamped to 5–95%. Losses apply immediately to available R/pending R, stopping at zero. Gains require a $1,000 pool and ten addresses; those are not independent-person or meaningful-risk guarantees.
+- Bonus: positive net market gain times the multiplier actually carried by winning bets, shared after every bettor settles. Entry order affects bonus shares. The $2,000 whale / twenty $80 YES example pays $177 principal per YES address plus unequal bonuses averaging about $2.
+- Court: R-gated addresses, commit/reveal deadlines and three matching votes. A failed two-round court refunds stakes. Address conflicts and a random starting slot do not establish independent adjudication.
+- Creation: owner exception, otherwise R≥36, no flag, a $25 bond and $2 fee. The category allowlist does not semantically ban prohibited topics. Source and criteria are human-readable strings, not an automatic oracle adapter.
 
-| Failure | What happened | Kleos answer |
-|---|---|---|
-| **Resolution capture** (Mar 2025) | In Polymarket's $7M Ukraine minerals market, one UMA token whale reportedly cast about 25% of dispute votes and forced a premature "Yes". [Source](https://thedefiant.io/news/defi/polymarket-s-usd7m-ukraine-mineral-deal-debacle-traced-to-oracle-whale) | Resolvers are gated by earned reputation, not purchasable tokens. |
-| **Conflicted judges** (2026) | A Wall Street Journal investigation found nearly 20% of disputed Polymarket outcomes involved oracle voters with stakes in the market they judged. [Source](https://www.turbinefi.com/blog/how-prediction-markets-resolve-oracles-disputes-2026) | Anyone with a position is excluded from resolving that market. |
-| **Price distortion** (Oct 2024) | One trader with eleven linked wallets pushed Polymarket's election odds 10–15 points above competing platforms. [Source](https://papers.ssrn.com/sol3/papers.cfm?abstract_id=6670638) | A reputation-weighted price shown next to the money price, with a 10% per-address cap. |
-| **Insider trading** (Apr 2026) | In the first criminal case, a soldier allegedly used classified information to bet $33,000 on the Maduro operation and cashed out about $400,000. [Source](https://fortune.com/2026/04/26/prediction-markets-insider-trading-illegal-kalshi-polymarket-robin-hanson-economist/) | Reputation vests over time, gains are capped per market, anomalies are reviewed. |
+## App behavior
 
-### Evidence
+Configured live contracts supply market IDs, pools, quote weights, receipts, profiles and observed participant rankings. Failed live reads show an unavailable state. Without addresses, sample data keeps demo mode working. Historical data has explicit budgets and unknown fields; it does not invent activity or sharp counts.
 
-- Small crowds of proven forecasters outperform larger crowds in both markets and polls (Atanasov, Witkowski, Mellers & Tetlock, *International Journal of Forecasting*, 2025). [Source](https://www.sciencedirect.com/science/article/abs/pii/S0169207023001413)
-- Across 5,456 Polymarket and Kalshi markets, bigger bettors were not more accurate; in some markets whales had negative edge (Daleep et al., 2026). [Source](https://klementoninvesting.substack.com/p/a-fundamental-flaw-of-prediction)
+Mera passkeys derive signing accounts. Public credential metadata is cached; signing authority stays in memory until lock. Small-action prompting limits are UI policy, not cryptographic spending caps. Fresh authorization preserves the selected signer. Recovery phrases clear on timeout/background/lock; supported real-device recovery still needs verification.
 
-> **Implementation status:** every answer above is implemented and tested in `contracts/` (37 tests). The Monad testnet deployment is pending.
+The sponsor requires a short-lived receiving-account signature and checks transaction execution. Its process-local queue and cooldown are partial controls. A shared durable budget and signer queue are needed for public operation across replicas. See [account and sponsor details](web/docs/account-and-sponsor.md).
 
-## How it works
+Calls contain up to 140 UTF-8 bytes. Results compare a chosen side with the recorded outcome. Engagement votes count addresses, not independent endorsements. Public calls and follows are permanent.
 
-| Formula | Meaning |
-|---|---|
-| `M = min(1 + 0.5·√R, 5)` | Reputation becomes a multiplier with diminishing returns |
-| `P_rep = YES_E / total_E`, `P_money = YES$ / total$` | The signal and the money price, side by side |
-| Right: `ΔR = +k·s·(1 − p)` · Wrong: `ΔR = −1.5·k·s·p` | You earn reputation for surprising the market; losses hurt 1.5× more |
-
-Money pays money: payouts split the losing pool by stake, so newcomers earn the same per dollar as veterans. Losing costs your stake, never more: fees come only out of the losing side, once, at resolution. 2% funds a bonus for winners who beat the market and 1% is Kleos revenue, along with a $2 fee per community-created market. The interactive version lives at `/how-it-works`.
-
-## What's in the app
-
-- **Passkey accounts (Mera).** No wallet extension, no seed phrase. The account is derived from a passkey and rebuilt on any device; nothing secret is stored. Gas and test USD are sponsored, so a first bet is a single transaction. Sessions lock after 15 idle minutes; bigger bets, bonds and jury votes ask for the passkey again.
-- **Market creation.** The team, and tier-V traders (R ≥ 36) with a $25 bond plus a $2 fee. The bond comes back when the market resolves YES or NO and is lost if the court rules the question ambiguous. Whoever writes a question can't propose its outcome or sit on its jury.
-- **Kleos Court.** A disputed outcome goes to 5 randomly drawn tier-V jurors with no position in the market. Votes are committed hidden and revealed later; 3 of 5 decide YES, NO or AMBIGUOUS, which voids the market and refunds everyone. A dispute needs at least 3 eligible jurors, and a closed market nobody resolves expires into refunds, so stakes are never stuck. A juror's hidden-vote secret is derived from their passkey, so it can be revealed from any device.
-- **Calls and the feed.** Any bet can carry a call: a public, permanent one-line reason, scored when the market resolves ("Called it" / "Missed"). The feed filters by All, Sharps and Following; calls take ▲▼ votes.
-- **Profiles.** Usernames, follows, reputation over time and a history where every change links to its transaction, with the math shown on hover.
-- **Compare.** Real controversies (the Zelensky suit, Khamenei on Kalshi) replayed on Kleos, including what Kleos would *not* fix.
-
-## Repository
-
-```
-contracts/   Solidity (Hardhat 3): Kleos.sol (markets, reputation, Kleos Court), KleosSocial.sol
-             (usernames, follows, votes), KleosUSD.sol (test stablecoin), tests, deploy and demo scripts
-web/         Next.js app: markets, market page with the court, feed, profiles, compare, how it works
-brand/       Brand kit: logos, tier laurels, palette, typography, icons (see brand/README.md)
-design/      Reference exports from Claude Design
-```
-
-## Run it
+## Run locally
 
 ```bash
 npm --prefix contracts test
-```
-
-```bash
 npm --prefix web run dev
 ```
 
-Without contract addresses in `web/.env.local`, the app runs in demo mode with sample data. See `web/.env.example`.
-
-**Full local stack** (a local chain with demo traders, a resolved market and a live court), from `contracts/`, each in its own terminal:
+For a local chain, follow `.agents/skills/dev-stack/SKILL.md`; deployment, seeding and the bot run from `contracts/`:
 
 ```bash
 npm run node
+npm run deploy:local
+npm run seed:local
+npm run court-bot
 ```
 
-```bash
-npm run deploy:local && npm run seed:local && npm run court-bot
-```
+Use separate terminals for the node and web server. Demo catalog times are set relative to the chain when seeded. Seed and court scripts have durable local journals; replay or reset rules are documented in `contracts/scripts/README.md`. Replay cannot finish an unbroadcast bet after its fixed close time.
 
-`deploy:local` writes the addresses into `web/.env.local`. On Monad testnet, set `ENVIO_API_TOKEN` in the web server's env: event reads go through Envio HyperSync, since the public RPC serves logs 100 blocks at a time. Set `KLEOS_ME=0x…` before `seed:local` to give your passkey account demo reputation, and use `npm run dispute` to send a proposal to the court.
+Testnet deployment, signed actions and private-key use require the owner's explicit authorization for that specific action. Secrets belong in server env variables; only `NEXT_PUBLIC_*` configuration reaches the browser.
 
-## Known limitations
+## Repository and next decisions
 
-- **Jury bribery.** Disputes go to the Kleos Court, where votes stay hidden until the reveal, but a juror can prove their vote afterward, so open bribes are possible. Random draws and reputation at stake make it costly, not impossible. Jury draws use block randomness, which block producers can nudge.
-- **Parimutuel pricing.** Thin markets move sharply with each bet. LMSR is the planned upgrade for thin markets.
-- **The anomaly flag is a heuristic, not proof of insider trading.** It holds back unvested reputation for review; it does not accuse anyone.
+`contracts/` holds contracts and lifecycle scripts; `web/` the Next.js app; `indexer/` Envio handlers; `brand/` design assets.
+
+Participant independence, court economics and mechanism security still need validation. No buyer, renewal, forecast improvement or real-value operating route has been established.

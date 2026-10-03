@@ -3,7 +3,7 @@ import { isAddress, type Address } from "viem";
 import { notFound } from "next/navigation";
 import { getTrader, reputationHistory, sampleFeed, type FeedItem, type RepChange } from "@/lib/data";
 import { explainChange, multiplier, PARAMS } from "@/lib/math";
-import { tierOf, TIER_NAMES } from "@/lib/tiers";
+import { tierOf, tierOfWad, TIER_NAMES } from "@/lib/tiers";
 import { IS_LIVE, IS_LOCAL_CHAIN, addressUrl, shortAddress, txUrl } from "@/lib/chain";
 import { readFeed, readProfile } from "@/lib/onchain";
 import { FeedList } from "@/components/feed-list";
@@ -11,6 +11,7 @@ import { LaurelBadge } from "@/components/laurel";
 import { DotNumber } from "@/components/dot-number";
 import { ReputationChart } from "@/components/reputation-chart";
 import { FollowButton } from "@/components/follow-button";
+import { ReputationActions } from "@/components/reputation-actions";
 
 type View = {
   name?: string;
@@ -22,16 +23,19 @@ type View = {
   losses: number;
   history: RepChange[];
   historyError: boolean;
+  rawR?: string;
+  vestAt?: number;
+  asOfBlock?: string;
+  multiplier?: number;
+  activationMin?: number;
 };
 
-const EMPTY: View = { r: 0, pending: 0, resolvedBets: 0, flagged: false, wins: 0, losses: 0, history: [], historyError: true };
-
-async function load(address: Address): Promise<View> {
+async function load(address: Address): Promise<View | null> {
   if (IS_LIVE) {
     try {
       return await readProfile(address);
     } catch {
-      return EMPTY; // chain unreachable: show an honest empty state instead of crashing
+      return null;
     }
   }
   const trader = getTrader(address);
@@ -43,17 +47,20 @@ export default async function ProfilePage(props: PageProps<"/profile/[address]">
   if (!isAddress(address)) notFound();
 
   const v = await load(address);
-  const calls: FeedItem[] = IS_LIVE ? await readFeed(50, address).catch(() => []) : sampleFeed(address);
-  const tier = tierOf(v.r);
-  const activated = v.resolvedBets >= PARAMS.nMin;
-  const mult = activated ? multiplier(v.r) : 1;
+  if (!v) return <main className="mx-auto w-full max-w-[860px] px-4 py-10"><h1 className="font-mono text-xl">{shortAddress(address)}</h1><p role="alert" className="card mt-5 p-6 text-muted">Profile data could not be read. Reload to try again.</p></main>;
+  let callsError = false;
+  const calls: FeedItem[] = IS_LIVE ? await readFeed(50, address).catch(() => { callsError = true; return []; }) : sampleFeed(address);
+  const tier = v.rawR ? tierOfWad(BigInt(v.rawR)) : tierOf(v.r);
+  const activationMin = v.activationMin ?? PARAMS.nMin;
+  const activated = v.resolvedBets >= activationMin;
+  const mult = v.multiplier ?? (activated ? multiplier(v.r) : 1);
   const points = [...v.history].reverse().map((h) => ({ t: h.timestamp, r: h.newR }));
 
   return (
     <main className="mx-auto flex w-full max-w-[860px] flex-1 flex-col gap-6 px-4 pt-8 pb-16 md:px-0">
       <section className="card flex flex-col gap-5 p-6">
         <div className="flex items-start gap-5">
-          <LaurelBadge r={v.r} size={72} />
+          <LaurelBadge r={v.r} rawR={v.rawR} size={72} />
           <div className="flex min-w-0 flex-1 flex-col gap-1.5">
             <h1 className="truncate text-[28px] leading-tight font-medium">
               {v.name ? `@${v.name}` : <span className="font-mono">{shortAddress(address)}</span>}
@@ -74,7 +81,7 @@ export default async function ProfilePage(props: PageProps<"/profile/[address]">
             </div>
             {!activated && (
               <span className="lbl !text-[11px]">
-                Boost unlocks after {PARAMS.nMin} resolved bets · {v.resolvedBets}/{PARAMS.nMin}
+                Boost unlocks after {activationMin} qualifying positions · {v.resolvedBets}/{activationMin}
               </span>
             )}
           </div>
@@ -84,20 +91,22 @@ export default async function ProfilePage(props: PageProps<"/profile/[address]">
         <dl className="flex flex-wrap gap-x-10 gap-y-3 border-t border-line pt-4">
           <Stat label="Reputation" value={v.r.toFixed(1)} accent note={v.pending > 0 ? `+${v.pending.toFixed(2)} vesting` : undefined} />
           <Stat label="Boost" value={`${mult.toFixed(1)}×`} />
-          <Stat label="Right" value={String(v.wins)} />
-          <Stat label="Wrong" value={String(v.losses)} />
+          <Stat label="Settled winning sides" value={v.historyError ? "—" : String(v.wins)} />
+          <Stat label="Settled losing sides" value={v.historyError ? "—" : String(v.losses)} />
         </dl>
 
         {points.length >= 2 && <ReputationChart points={points} height={150} />}
+        <p className="text-xs text-muted">{IS_LIVE ? `Snapshot at block ${v.asOfBlock}. R includes bets, court duties and administrator adjustments. Counts cover reputation-scored side results; a hedge can contribute to both.` : "Sample profile · demo mode"}</p>
       </section>
+      {IS_LIVE && <ReputationActions />}
 
       <section className="flex flex-col gap-4">
         <div className="flex items-baseline justify-between px-1">
           <h2 className="font-dot text-[24px] font-black">CALLS</h2>
-          <span className="lbl">{calls.length} public · scored when markets resolve</span>
+          <span className="lbl">{callsError ? "Unavailable" : `${calls.length} recent calls`} · side results</span>
         </div>
         {calls.length === 0 ? (
-          <p className="card lbl p-8 text-center">No calls yet.</p>
+          <p className="card lbl p-8 text-center">{callsError ? "Calls could not be read. Reload to try again." : "No calls in the loaded history."}</p>
         ) : (
           <FeedList items={calls} tabs={false} />
         )}
@@ -111,7 +120,7 @@ export default async function ProfilePage(props: PageProps<"/profile/[address]">
           </span>
           <span className="lbl">Rebuilt from on-chain events · hover a change to check the math</span>
         </summary>
-        {v.historyError && <p className="lbl mt-4 !text-accent">Couldn&apos;t load the full history from the RPC. The indexer will serve it.</p>}
+        {v.historyError && <p className="lbl mt-4 !text-accent">History is unavailable within the read budget. Current R above is still a chain snapshot.</p>}
         {v.history.length === 0 ? (
           <p className="lbl py-10 text-center">Nothing yet. Every change will show up here with its transaction.</p>
         ) : (
@@ -133,7 +142,7 @@ export default async function ProfilePage(props: PageProps<"/profile/[address]">
                   const bet = h.isBet !== false && h.marketId > 0;
                   const formula = explainChange(h);
                   return (
-                    <tr key={`${h.tx}-${h.delta}`}>
+                    <tr key={`${h.tx}-${h.logIndex ?? `${h.marketId}-${h.delta}`}`}>
                       <td className="py-3 text-muted">{h.date}</td>
                       <td className="max-w-[320px] truncate py-3 pr-4 font-sans">
                         {h.marketId > 0 ? <Link href={`/market/${h.marketId}`}>{h.question}</Link> : h.question}

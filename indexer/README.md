@@ -23,6 +23,11 @@ Defined in `schema.graphql`, built by `src/handlers/`.
 | `PricePoint` | `BetPlaced` | Price charts |
 | `Trader` | Reputation, bet, court and social events | Profiles and the leaderboard: R, wins, losses, juror status, name, follower counts |
 | `ReputationChange` | `ReputationChanged` | Reputation history, labelled Bet, Jury or Admin |
+| `BonusClaim` | `BonusClaimed` | Successful claims, including zero and non-position claims |
+| `Vesting` | `Vested` | Complete reputation maturity history |
+| `Slash` | `Slashed` | Admin action provenance; preserves activation history |
+| `OwnershipChange` | `OwnershipTransferred` | Owner transitions and eligibility exception provenance |
+| `ContractConfiguration` | Direct creation input or a verified pinned immutable snapshot | Vest period and other deployment parameters without assumed defaults |
 | `Call` | `CallPosted`, `MarketResolved`, `MarketVoided`, `CallVoted` | Calls with their result and up/down votes |
 | `CourtRound` | `JuryDrawn`, `VoteCommitted`, `VoteRevealed`, `CourtRedrawn`, `Verdict`, `MarketVoided` | Each Kleos Court round on a disputed market |
 | `JurorVote` | `JuryDrawn`, `VoteCommitted`, `VoteRevealed` | Each juror's seat and vote in a round |
@@ -31,6 +36,8 @@ Defined in `schema.graphql`, built by `src/handlers/`.
 | `Protocol` | Market, bet, call, juror and revenue events | Totals across the protocol (Envio Cloud has no `_aggregate` queries) |
 
 Bet buddies (`BuddyPair`, issue #2) and the web client (`web/src/lib/indexer.ts`, issue #3) are planned.
+
+Exact activation history is nullable `BigInt`, with provenance. Direct seed input resets it; an unrecoverable nested seed makes it unknown. Current court commitments can also be unknown for nested writes. Clients must preserve these nulls. A successful claim is identified by `bonusClaimed`/`BonusClaim`, including when its amount is zero. Schema changes require a full replay before serving the new API; they do not change the deployed contracts.
 
 ## Test
 

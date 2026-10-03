@@ -1,14 +1,17 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { keccak256, toHex, zeroAddress, type Address, type Hex, type WalletClient } from "viem";
+import { encodeFunctionData, keccak256, toHex, type Address, type Hex, type TransactionReceipt, type WalletClient } from "viem";
 import { KLEOS_ADDRESS, SOCIAL_ADDRESS, USD_ADDRESS, chain, publicClient, shortAddress } from "@/lib/chain";
 import { kleosAbi, kleosSocialAbi, kleosUsdAbi } from "@/lib/abi";
 import { describeAccountError } from "@/lib/mera";
 import { RESOLUTION_STAGES } from "@/lib/data";
 import { useKleosAccount } from "./account";
 import { ResolutionTrack } from "./resolution-track";
+import { PendingTransactionNotice, usePendingTransaction } from "./pending-transaction";
+import { readBettorDiscovery } from "@/lib/bettors";
+import { ensureUsdAllowance } from "@/lib/usd-spend";
 
 const STATE = { Open: 0, Proposed: 1, Disputed: 2, Resolved: 3 } as const;
 const VOTES = [
@@ -21,41 +24,44 @@ const DISPUTE_BOND = 15_000_000n;
 
 type Snapshot = Awaited<ReturnType<typeof readSnapshot>>;
 
+let parameters: Promise<{ disputeWindow: bigint; courtPeriod: bigint; resolverMinR: bigint; expiryWindows: bigint }> | undefined;
+function readParameters() {
+  if (!parameters) {
+    const k = { address: KLEOS_ADDRESS!, abi: kleosAbi } as const;
+    parameters = Promise.all([
+      publicClient.readContract({ ...k, functionName: "DISPUTE_WINDOW" }), publicClient.readContract({ ...k, functionName: "COURT_PERIOD" }),
+      publicClient.readContract({ ...k, functionName: "RESOLVER_MIN_R" }), publicClient.readContract({ ...k, functionName: "EXPIRY_WINDOWS" }),
+    ]).then(([disputeWindow, courtPeriod, resolverMinR, expiryWindows]) => ({ disputeWindow, courtPeriod, resolverMinR, expiryWindows })).catch((e) => { parameters = undefined; throw e; });
+  }
+  return parameters;
+}
+
 async function readSnapshot(id: bigint, me: Address | undefined) {
-  const k = { address: KLEOS_ADDRESS!, abi: kleosAbi } as const;
-  const [market, court, disputeWindow, courtPeriod, payout, owner] = await Promise.all([
+  const blockNumber = await publicClient.getBlockNumber();
+  const k = { address: KLEOS_ADDRESS!, abi: kleosAbi, blockNumber } as const;
+  const [market, court, payout, owner, params] = await Promise.all([
     publicClient.readContract({ ...k, functionName: "getMarket", args: [id] }),
     publicClient.readContract({ ...k, functionName: "getCourt", args: [id] }),
-    publicClient.readContract({ ...k, functionName: "DISPUTE_WINDOW" }),
-    publicClient.readContract({ ...k, functionName: "COURT_PERIOD" }),
     publicClient.readContract({ ...k, functionName: "payouts", args: [id] }),
-    publicClient.readContract({ ...k, functionName: "owner" }),
+    publicClient.readContract({ ...k, functionName: "owner" }), readParameters(),
   ]);
-  const jury = court.round > 0 ? await publicClient.readContract({ ...k, functionName: "getJury", args: [id, court.round] }) : [];
+  const jury = market.state === STATE.Disputed && court.round > 0 ? await publicClient.readContract({ ...k, functionName: "getJury", args: [id, court.round] }) : [];
   const [names, juryVotes, juryCommits] = await Promise.all([
-    SOCIAL_ADDRESS && jury.length
-      ? publicClient.readContract({ address: SOCIAL_ADDRESS, abi: kleosSocialAbi, functionName: "namesOf", args: [[...jury]] })
-      : Promise.resolve([] as readonly string[]),
+    SOCIAL_ADDRESS && jury.length ? publicClient.readContract({ address: SOCIAL_ADDRESS, abi: kleosSocialAbi, functionName: "namesOf", args: [[...jury]], blockNumber }).catch(() => [] as readonly string[]) : Promise.resolve([] as readonly string[]),
     Promise.all(jury.map((j) => publicClient.readContract({ ...k, functionName: "votes", args: [id, court.round, j] }))),
     Promise.all(jury.map((j) => publicClient.readContract({ ...k, functionName: "commitments", args: [id, court.round, j] }))),
   ]);
-  const who = me ?? zeroAddress;
-  const [rep, hasBet, settled, bonus, bonusClaimed] = await Promise.all([
-    publicClient.readContract({ ...k, functionName: "reputation", args: [who] }),
-    publicClient.readContract({ ...k, functionName: "hasBet", args: [id, who] }),
-    publicClient.readContract({ ...k, functionName: "settled", args: [id, who] }),
-    publicClient.readContract({ ...k, functionName: "bonusOf", args: [id, who] }),
-    publicClient.readContract({ ...k, functionName: "bonusClaimed", args: [id, who] }),
-  ]);
+  const [rep, hasBet, bonus, bonusClaimed] = me ? await Promise.all([
+    publicClient.readContract({ ...k, functionName: "reputation", args: [me] }), publicClient.readContract({ ...k, functionName: "hasBet", args: [id, me] }),
+    market.state === STATE.Resolved ? publicClient.readContract({ ...k, functionName: "bonusOf", args: [id, me] }) : Promise.resolve(0n),
+    market.state === STATE.Resolved ? publicClient.readContract({ ...k, functionName: "bonusClaimed", args: [id, me] }) : Promise.resolve(false),
+  ]) : [undefined, false, 0n, false] as const;
   return {
-    market,
-    court,
-    disputeWindow: Number(disputeWindow),
-    isOwner: Boolean(me && owner.toLowerCase() === me.toLowerCase()),
-    courtPeriod: Number(courtPeriod),
-    bonusOpen: payout[3],
+    market, court, blockNumber, accountAddress: me, marketId: id,
+    disputeWindow: Number(params.disputeWindow), resolverMinR: params.resolverMinR, expiryWindows: Number(params.expiryWindows),
+    isOwner: Boolean(me && owner.toLowerCase() === me.toLowerCase()), courtPeriod: Number(params.courtPeriod), bonusOpen: payout[3],
     jury: jury.map((address, i) => ({ address, name: names[i] || undefined, vote: juryVotes[i], committed: juryCommits[i] !== `0x${"0".repeat(64)}` })),
-    me: { r: Number(rep.r) / 1e18, flagged: rep.flagged, hasBet, settled, bonus, bonusClaimed },
+    me: { r: rep?.r ?? 0n, flagged: rep?.flagged ?? false, hasBet, bonus, bonusClaimed },
   };
 }
 
@@ -91,54 +97,87 @@ export function ResolutionPanel({ marketId, oracle }: { marketId: number; oracle
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const transaction = usePendingTransaction(`resolution:${KLEOS_ADDRESS}:${marketId}`);
   const [evidence, setEvidence] = useState("");
+  const [readError, setReadError] = useState(false);
+  const [readAt, setReadAt] = useState(0);
+  const reading = useRef(false);
+  const sequence = useRef(0);
+  const acting = useRef(false);
 
   const refresh = useCallback(async () => {
+    if (reading.current) return;
+    reading.current = true;
+    const request = ++sequence.current;
     try {
-      setSnap(await readSnapshot(id, account.address));
-    } catch {
-      // Chain unreachable for a moment; keep the last snapshot.
-    }
+      const next = await readSnapshot(id, account.address);
+      if (request === sequence.current) { setSnap(next); setReadError(false); setReadAt(Math.floor(Date.now() / 1000)); }
+    } catch { if (request === sequence.current) setReadError(true); }
+    finally { reading.current = false; }
   }, [id, account.address]);
 
-  // Poll the chain: phases change on their own as windows open and close.
+  const invalidateRead = useCallback(() => { sequence.current++; }, []);
+  // Poll the chain: deadlines only change action availability, not contract state.
   useEffect(() => {
     const first = setTimeout(refresh, 0);
-    const t = setInterval(refresh, 2500);
+    const t = setInterval(refresh, 10_000);
     return () => {
       clearTimeout(first);
       clearInterval(t);
+      invalidateRead();
     };
-  }, [refresh]);
+  }, [refresh, invalidateRead]);
 
   /** Runs one on-chain action. `fresh` asks for the passkey again (bonds and jury votes). */
-  async function act(label: string, fresh: boolean, run: (client: WalletClient) => Promise<Hex | void>, bond?: bigint) {
+  async function act(label: string, fresh: boolean, run: (client: WalletClient) => Promise<TransactionReceipt | void>, bond?: bigint) {
+    if (acting.current || transaction.hasPending()) return;
+    acting.current = true;
     setError(null);
     setNotice(null);
-    const client = await account.authorize({ fresh }); // first await: may show the passkey prompt
-    if (!client?.account) return;
     setBusy(label);
     try {
-      await account.whenFunded();
+      const client = await account.authorize({ fresh }); // first await: may show the passkey prompt
+      if (!client?.account) return;
+      await account.whenFunded(client.account.address);
       if (bond) {
         const balance = await publicClient.readContract({ address: USD_ADDRESS!, abi: kleosUsdAbi, functionName: "balanceOf", args: [client.account.address] });
-        if (balance < bond) await account.requestFunds();
+        if (balance < bond) await account.requestFunds(client.account.address);
+        await ensureUsdAllowance(client, bond);
       }
-      const hash = await run(client);
-      if (hash) await publicClient.waitForTransactionReceipt({ hash });
+      await run(client);
       await refresh();
       router.refresh();
     } catch (e) {
       setError(describeAccountError(e));
     } finally {
+      acting.current = false;
       setBusy(null);
     }
   }
 
-  const write = (client: WalletClient, functionName: string, args: readonly unknown[]) =>
-    client.writeContract({ account: client.account!, chain, address: KLEOS_ADDRESS!, abi: kleosAbi, functionName, args } as never) as Promise<Hex>;
+  const write = async (client: WalletClient, functionName: string, args: readonly unknown[]) => {
+    const data = encodeFunctionData({ abi: kleosAbi, functionName, args } as never);
+    const hash = await client.writeContract({ account: client.account!, chain, address: KLEOS_ADDRESS!, abi: kleosAbi, functionName, args } as never);
+    const receipt = await transaction.confirm(hash, { sender: client.account!.address, to: KLEOS_ADDRESS!, data });
+    transaction.complete();
+    return receipt;
+  };
 
-  if (!snap) return <p className="lbl py-6 text-center">Reading the market from the chain…</p>;
+  async function checkPending() {
+    if (acting.current) return;
+    acting.current = true;
+    setError(null); setNotice(null);
+    try {
+      await transaction.check();
+      transaction.complete();
+      setNotice("The submitted transaction is confirmed. Review the refreshed market state before the next action.");
+      await refresh(); router.refresh();
+    } catch (failure) { setError(describeAccountError(failure)); }
+    finally { acting.current = false; }
+  }
+
+  if (!snap || snap.marketId !== id || snap.accountAddress?.toLowerCase() !== account.address?.toLowerCase()) return <div><PendingTransactionNotice transaction={transaction} onCheck={() => void checkPending()} /><p className="lbl py-6 text-center" role="status">{readError ? "Live resolution state could not be read. Retrying…" : "Reading the market from the chain…"}</p>{error && <p role="alert" className="text-sm">{error}</p>}</div>;
+  const stale = readError || now - readAt > 30 || Boolean(transaction.pending);
 
   const { market: m, court } = snap;
   const me = account.address?.toLowerCase();
@@ -148,8 +187,8 @@ export function ResolutionPanel({ marketId, oracle }: { marketId: number; oracle
   // Mirrors Kleos._requireResolver: the team can always propose; traders need tier II, no position,
   // no flag, and can't resolve a market they created.
   const isCreator = m.creator.toLowerCase() === me;
-  const canResolve = !snap.me.hasBet && (snap.isOwner || (snap.me.r >= 4 && !snap.me.flagged && !isCreator));
-  const expiresAt = Number(m.closeTime) + 20 * snap.disputeWindow; // EXPIRY_WINDOWS
+  const canResolve = !snap.me.hasBet && (snap.isOwner || (snap.me.r >= snap.resolverMinR && !snap.me.flagged && !isCreator));
+  const expiresAt = Number(m.closeTime) + snap.expiryWindows * snap.disputeWindow;
   const isProposer = m.proposer.toLowerCase() === me;
 
   const stage =
@@ -158,15 +197,13 @@ export function ResolutionPanel({ marketId, oracle }: { marketId: number; oracle
   if (m.state === STATE.Disputed) stageLabels[3] = "Kleos Court";
 
   const outcomeText = (yes: boolean) => (yes ? "YES" : "NO");
-  const btn = (label: string, onClick: () => void, variant = "btn-yes", disabled = false) => (
-    <button className={`btn ${variant} !min-h-11`} onClick={onClick} disabled={Boolean(busy) || disabled}>
-      {busy === label ? "…" : label}
-    </button>
-  );
+
 
   return (
     <div className="flex flex-col gap-5">
+      <PendingTransactionNotice transaction={transaction} onCheck={() => void checkPending()} />
       <ResolutionTrack stage={stage} labels={stageLabels} />
+      <p role="status" className="text-xs text-muted">{stale ? "This resolution snapshot is stale. Actions are paused until the chain can be read." : `Snapshot block ${snap.blockNumber} · refreshed ${Math.max(0, now - readAt)}s ago`}</p>
 
       {/* Open, not closed yet */}
       {m.state === STATE.Open && !closed && (
@@ -196,13 +233,8 @@ export function ResolutionPanel({ marketId, oracle }: { marketId: number; oracle
               <div className="grid grid-cols-2 gap-2">
                 {[true, false].map((yes) => (
                   <span key={String(yes)} className="contents">
-                    {btn(
-                      `Propose ${outcomeText(yes)}`,
-                      () =>
-                        act(`Propose ${outcomeText(yes)}`, true, (c) => write(c, "propose", [id, yes, keccak256(toHex(evidence.trim())), evidence.trim()]), BOND),
-                      yes ? "btn-yes" : "btn-no-active",
-                      !evidence.trim(),
-                    )}
+                    {<ActionButton label={`Propose ${outcomeText(yes)}`} onClick={() =>
+                        act(`Propose ${outcomeText(yes)}`, true, (c) => write(c, "propose", [id, yes, keccak256(toHex(evidence.trim())), evidence.trim()]), BOND)} variant={yes ? "btn-yes" : "btn-no-active"} disabled={!evidence.trim()} busy={Boolean(busy)} stale={stale} />}
                   </span>
                 ))}
               </div>
@@ -217,7 +249,7 @@ export function ResolutionPanel({ marketId, oracle }: { marketId: number; oracle
             </p>
           )}
           {now >= expiresAt &&
-            btn("Void: nobody proposed", () => act("Void: nobody proposed", false, (c) => write(c, "expire", [id])), "btn-no")}
+            <ActionButton label={"Void: nobody proposed"} onClick={() => act("Void: nobody proposed", false, (c) => write(c, "expire", [id]))} variant={"btn-no"} busy={Boolean(busy)} stale={stale} />}
         </div>
       )}
 
@@ -236,8 +268,8 @@ export function ResolutionPanel({ marketId, oracle }: { marketId: number; oracle
             </a>
           )}
           {now < windowEnds
-            ? !isProposer && btn("Dispute · $15 bond", () => act("Dispute · $15 bond", true, (c) => write(c, "dispute", [id]), DISPUTE_BOND), "btn-no")
-            : btn("Finalize", () => act("Finalize", false, (c) => write(c, "finalize", [id])))}
+            ? !isProposer && <ActionButton label={"Dispute · $15 bond"} onClick={() => act("Dispute · $15 bond", true, (c) => write(c, "dispute", [id]), DISPUTE_BOND)} variant={"btn-no"} busy={Boolean(busy)} stale={stale} />
+            : <ActionButton label={"Finalize"} onClick={() => act("Finalize", false, (c) => write(c, "finalize", [id]))} busy={Boolean(busy)} stale={stale} />}
           <p className="text-xs text-muted">A dispute sends this to the Kleos Court. If the jury upholds the proposal, the $15 goes to the jurors.</p>
         </div>
       )}
@@ -281,7 +313,7 @@ export function ResolutionPanel({ marketId, oracle }: { marketId: number; oracle
               <div className="grid grid-cols-3 gap-2">
                 {VOTES.map((v) => (
                   <span key={v.value} className="contents">
-                    {btn(v.label, () =>
+                    {<ActionButton label={v.label} onClick={() =>
                       act(v.label, true, async (c) => {
                         const salt = await deriveSalt(c, id, court.round);
                         const commitment = await publicClient.readContract({
@@ -290,9 +322,7 @@ export function ResolutionPanel({ marketId, oracle }: { marketId: number; oracle
                         const hash = await write(c, "commitVote", [id, commitment]);
                         setNotice(`Hidden vote sent. You'll reveal it after ${clockText(Number(court.commitEnd) - now)}; nothing was saved on this device.`);
                         return hash;
-                      }),
-                      iAmJuror.committed ? "btn-no" : v.value === 1 ? "btn-yes" : v.value === 2 ? "btn-no-active" : "btn-no",
-                    )}
+                      })} variant={iAmJuror.committed ? "btn-no" : v.value === 1 ? "btn-yes" : v.value === 2 ? "btn-no-active" : "btn-no"} busy={Boolean(busy)} stale={stale} />}
                   </span>
                 ))}
               </div>
@@ -301,7 +331,7 @@ export function ResolutionPanel({ marketId, oracle }: { marketId: number; oracle
           )}
 
           {iAmJuror && iAmJuror.committed && !iAmJuror.vote && now >= Number(court.commitEnd) && now < Number(court.revealEnd) &&
-            btn("Reveal my vote", () =>
+            <ActionButton label={"Reveal my vote"} onClick={() =>
               act("Reveal my vote", false, async (c) => {
                 // Rebuild the salt from the passkey and find which vote matches the hidden commitment.
                 const salt = await deriveSalt(c, id, court.round);
@@ -311,11 +341,10 @@ export function ResolutionPanel({ marketId, oracle }: { marketId: number; oracle
                   if (guess === committed) return write(c, "revealVote", [id, v.value, salt]);
                 }
                 throw new Error("This passkey didn't cast the hidden vote for this round.");
-              }),
-            )}
+              })} busy={Boolean(busy)} stale={stale} />}
 
           {(now >= Number(court.revealEnd) || (court.revealed > 0 && court.revealed === snap.jury.length)) &&
-            btn("Close the court", () => act("Close the court", false, (c) => write(c, "closeCourt", [id])))}
+            <ActionButton label={"Close the court"} onClick={() => act("Close the court", false, (c) => write(c, "closeCourt", [id]))} busy={Boolean(busy)} stale={stale} />}
         </div>
       )}
 
@@ -332,20 +361,22 @@ export function ResolutionPanel({ marketId, oracle }: { marketId: number; oracle
           )}
           <div className="flex flex-wrap gap-2">
             {!snap.bonusOpen &&
-              btn("Settle everyone", () =>
+              <ActionButton label={"Settle everyone"} onClick={() =>
                 act("Settle everyone", false, async (c) => {
-                  // Batches of 100 keep each transaction well under the block gas limit.
-                  const bettors = await publicClient.readContract({ address: KLEOS_ADDRESS!, abi: kleosAbi, functionName: "getBettors", args: [id] });
-                  for (let i = 0; i < bettors.length; i += 100) {
-                    const hash = await write(c, "settle", [id, bettors.slice(i, i + 100)]);
-                    await publicClient.waitForTransactionReceipt({ hash });
+                  const blockNumber = await publicClient.getBlockNumber();
+                  const discovery = await readBettorDiscovery(id, blockNumber);
+                  if (discovery.legacy) setNotice("Using the legacy full-list getter for this deployment (at most 1,000 bettors).");
+                  if (discovery.count === 0n) await write(c, "settle", [id, []]);
+                  for (let offset = 0n; offset < discovery.count; offset += 100n) {
+                    const batch = await discovery.page(offset);
+                    if (batch.length === 0 || batch.length > 100) throw new Error("Settlement discovery returned an invalid page.");
+                    await write(c, "settle", [id, batch]);
+                    setNotice(`Settled through bettor ${offset + BigInt(batch.length)} of ${discovery.count}.`);
                   }
-                }),
-              )}
+                })} busy={Boolean(busy)} stale={stale} />}
             {snap.bonusOpen && snap.me.bonus > 0n && !snap.me.bonusClaimed &&
-              btn(`Claim bonus · $${(Number(snap.me.bonus) / 1e6).toFixed(2)}`, () =>
-                act(`Claim bonus · $${(Number(snap.me.bonus) / 1e6).toFixed(2)}`, false, (c) => write(c, "claimBonus", [id, c.account!.address])),
-              )}
+              <ActionButton label={`Claim bonus · $${(Number(snap.me.bonus) / 1e6).toFixed(2)}`} onClick={() =>
+                act(`Claim bonus · $${(Number(snap.me.bonus) / 1e6).toFixed(2)}`, false, (c) => write(c, "claimBonus", [id, c.account!.address]))} busy={Boolean(busy)} stale={stale} />}
           </div>
           <p className="text-xs text-muted">Settling pays everyone and updates reputation. Anyone can trigger it, for everyone.</p>
         </div>
@@ -359,4 +390,8 @@ export function ResolutionPanel({ marketId, oracle }: { marketId: number; oracle
       )}
     </div>
   );
+}
+
+function ActionButton({ label, onClick, variant = "btn-yes", disabled = false, busy, stale }: { label: string; onClick: () => void; variant?: string; disabled?: boolean; busy: boolean; stale: boolean }) {
+  return <button className={`btn ${variant} !min-h-11`} onClick={onClick} disabled={busy || stale || disabled}>{busy ? "…" : label}</button>;
 }

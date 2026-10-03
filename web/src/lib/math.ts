@@ -12,6 +12,11 @@ export const PARAMS = {
   protocolFeeBps: 100, // protocol revenue
   deltaRMax: 0.8,
   nMin: 10,
+  minRepPool: 1_000,
+  minBettors: 10,
+  minEntryPrice: 0.05,
+  flagPrice: 0.1,
+  flagSize: 50,
 } as const;
 
 /** M = min(1 + α·√R, M_max) */
@@ -24,7 +29,7 @@ export function boostFraction(m: number): number {
   return (m - 1) / (PARAMS.mMax - 1);
 }
 
-/** E = m · M, with the boost trimmed so one address stays under 10% of a deep pool. */
+/** E = m · M with the prospective boost bound; historical excess and principal are retained. */
 export function effectiveBet(amount: number, m: number, pool = 0, userEff = 0): number {
   const eff = amount * m;
   if (eff <= amount || pool + amount < PARAMS.boostCapMinPool) return eff; // depth judged after the bet, as on-chain
@@ -34,24 +39,30 @@ export function effectiveBet(amount: number, m: number, pool = 0, userEff = 0): 
 
 /** Stake factor s = min(m / $50, 1) */
 export function stakeFactor(amount: number): number {
-  return Math.min(amount / PARAMS.stakeRef, 1);
+  return Math.max(0, Math.min(amount / PARAMS.stakeRef, 1));
+}
+
+export function entryPrice(p: number): number {
+  return Math.max(PARAMS.minEntryPrice, Math.min(1 - PARAMS.minEntryPrice, p));
 }
 
 /** Right: +k·s·(1 − p). Wrong: −λ·k·s·p. p = price of the side you picked, at entry. */
 export function reputationDelta(won: boolean, p: number, amount: number): number {
   const ks = PARAMS.k * stakeFactor(amount);
-  return won ? Math.min(ks * (1 - p), PARAMS.deltaRMax) : -PARAMS.lambda * ks * p;
+  const price = entryPrice(p);
+  return won ? Math.min(ks * (1 - price), PARAMS.deltaRMax) : -PARAMS.lambda * ks * price;
 }
 
 /** Human-readable version of the update, so anyone can check the math. */
 export function reputationFormula(won: boolean, p: number, amount: number): string {
+  p = entryPrice(p);
   const s = stakeFactor(amount);
   const d = reputationDelta(won, p, amount);
   const f = (n: number) => n.toFixed(2);
   const capped = won && PARAMS.k * s * (1 - p) > PARAMS.deltaRMax;
   return won
-    ? `+k·s·(1 − p) = ${PARAMS.k}·${f(s)}·(1 − ${f(p)}) = +${f(d)}${capped ? " (per-market cap)" : ""}`
-    : `−λ·k·s·p = ${PARAMS.lambda}·${PARAMS.k}·${f(s)}·${f(p)} = ${f(d)}`;
+    ? `min(k·s·(1 − p), ${PARAMS.deltaRMax}) = min(${PARAMS.k}·${f(s)}·(1 − ${f(p)}), ${PARAMS.deltaRMax}) = +${f(d)}${capped ? " (per-market cap)" : ""}`
+    : `−λ·k·s·p = −${PARAMS.lambda}·${PARAMS.k}·${f(s)}·${f(p)} = ${f(d)}`;
 }
 
 /** Money pays money: payout = m + (m / ΣwinningMoney) · (L − bonus fee − protocol fee). */
@@ -73,13 +84,15 @@ export function fee(losingMoney: number): number {
  * The math behind one recorded reputation change, rebuilt from what the event carries
  * (entry price and delta), so anyone can check it without trusting the UI.
  */
-export function explainChange(row: { delta: number; entryPrice: number; isBet?: boolean; marketId: number }): string {
+export function explainChange(row: { delta: number; entryPrice: number; isBet?: boolean; marketId: number; kind?: string; side?: boolean; outcome?: boolean }): string {
   const f = (n: number) => n.toFixed(2);
-  if (row.marketId === 0) return `Demo seed, published on-chain: ${row.delta >= 0 ? "+" : ""}${f(row.delta)}`;
+  if (row.kind === "vest") return "Pending reputation moved into vested R. This is a transfer, not a new gain.";
+  if (row.marketId === 0) return `Administrator adjustment, published on-chain: ${row.delta >= 0 ? "+" : ""}${f(row.delta)}`;
   if (row.isBet === false) {
     return row.delta >= 0 ? `Juror voted with the verdict: +${f(row.delta)} (vests)` : `Juror penalty: ${f(row.delta)}`;
   }
   const p = row.entryPrice;
+  if (row.delta === 0 && row.side !== row.outcome) return `Losing side at entry p = ${f(p)}. No available R was taken at the floor.`;
   if (row.delta >= 0) {
     // The event carries the applied gain: at the per-market cap it no longer reveals s.
     if (row.delta >= PARAMS.deltaRMax - 1e-9) return `+k·s·(1 − p), capped per market at +${f(PARAMS.deltaRMax)} (entry p = ${f(p)})`;

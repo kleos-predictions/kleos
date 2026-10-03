@@ -1,10 +1,39 @@
 // Market lifecycle: creation, sponsorship, proposal, dispute, resolution, bonus.
 import { indexer, type Call, type EvmOnEventContext } from "envio";
-import { WAD, getProtocol, roundId } from "../utils.js";
+import { WAD, addressId, eventId, getProtocol, roundId } from "../utils.js";
+import { creationConfiguration } from "../transaction-input.js";
+import { getConfiguration } from "../configuration.js";
 
-indexer.onEvent({ contract: "Kleos", event: "CategoryAdded" }, async ({ event, context }) => {
-  context.Category.set({ id: event.params.id.toString(), name: event.params.name });
-});
+indexer.onEvent(
+  { contract: "Kleos", event: "CategoryAdded", fields: { transaction: ["hash", "input", "to", "from", "contractAddress"] } },
+  async ({ event, context }) => {
+    context.Category.set({ id: event.params.id.toString(), name: event.params.name });
+    const [config, protocol] = await Promise.all([getConfiguration(context, event.srcAddress), getProtocol(context)]);
+    const creation = creationConfiguration(event);
+    if (!creation) return;
+    context.ContractConfiguration.set({
+      ...config, ...creation, source: "DirectCreation", blockNumber: event.block.number,
+      txHash: event.transaction.hash, blockHash: undefined, runtimeSha256: undefined,
+    });
+    if (event.transaction.from) {
+      context.Protocol.set({ ...protocol, owner: addressId(event.transaction.from), ownerSource: "DirectCreation" });
+    }
+  },
+);
+
+indexer.onEvent(
+  { contract: "Kleos", event: "OwnershipTransferred", fields: { block: ["timestamp"], transaction: ["hash"] } },
+  async ({ event, context }) => {
+    const protocol = await getProtocol(context);
+    const owner = addressId(event.params.newOwner);
+    context.Protocol.set({ ...protocol, owner, ownerSource: "Event" });
+    context.OwnershipChange.set({
+      id: eventId(event), previousOwner: addressId(event.params.previousOwner), newOwner: owner,
+      timestamp: event.block.timestamp, txHash: event.transaction.hash,
+      blockNumber: event.block.number, logIndex: event.logIndex, contractAddress: addressId(event.srcAddress),
+    });
+  },
+);
 
 indexer.onEvent(
   { contract: "Kleos", event: "MarketCreated", fields: { block: ["timestamp"] } },
