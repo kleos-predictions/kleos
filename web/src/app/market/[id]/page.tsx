@@ -1,9 +1,10 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { Suspense } from "react";
-import { getMarket, recentBets, sampleCalls, type Bet, type Call } from "@/lib/data";
+import { getMarket, recentBets, sampleCalls, type Bet, type Call, type Market } from "@/lib/data";
 import { IS_LIVE, shortAddress } from "@/lib/chain";
 import { readCalls, readLiveMarket, readRecentBets } from "@/lib/onchain";
+import * as indexer from "@/lib/indexer";
 import { CallsList } from "@/components/calls-list";
 import { ResolutionPanel } from "@/components/resolution-panel";
 import { OddsDisplay } from "@/components/odds-display";
@@ -16,22 +17,15 @@ import { SharpSignal } from "@/components/sharp-signal";
 
 export default async function MarketPage(props: PageProps<"/market/[id]">) {
   const { id } = await props.params;
-  let market;
-  try {
-    market = IS_LIVE ? await readLiveMarket(Number(id)) : getMarket(Number(id));
-  } catch {
+  const n = Number(id);
+  if (!Number.isSafeInteger(n) || n < 1) notFound();
+  let page;
+  try { page = IS_LIVE ? await loadLive(n) : { market: getMarket(n), bets: recentBets(n), calls: sampleCalls(n), betsError: false, callsError: false }; }
+  catch {
     return <main className="mx-auto w-full max-w-3xl flex-1 p-8"><div className="card flex flex-col gap-4 p-6" role="alert"><h1 className="text-2xl">Live market unavailable</h1><p>The chain could not be read. Trading is unavailable until this market can be verified.</p><Link href={`/market/${id}`} className="btn btn-no">Try again</Link></div></main>;
   }
+  const { market, bets, calls, betsError, callsError } = page;
   if (!market) notFound();
-  let bets: Bet[] = IS_LIVE ? [] : recentBets(market.id);
-  let calls: Call[] = IS_LIVE ? [] : sampleCalls(market.id);
-  let betsError = false;
-  let callsError = false;
-  if (IS_LIVE) {
-    const results = await Promise.allSettled([readRecentBets(market.id), readCalls(market.id)]);
-    if (results[0].status === "fulfilled") bets = results[0].value; else betsError = true;
-    if (results[1].status === "fulfilled") calls = results[1].value; else callsError = true;
-  }
 
   return (
     <main className="mx-auto grid w-full max-w-[1440px] flex-1 gap-8 px-4 pt-8 pb-32 md:px-12 lg:grid-cols-[minmax(0,1fr)_400px] lg:items-start lg:pb-12">
@@ -57,7 +51,7 @@ export default async function MarketPage(props: PageProps<"/market/[id]">) {
               <Link href={`/profile/${market.creator.address}`} className="!text-ink normal-case">
                 {market.creator.name ? `@${market.creator.name}` : shortAddress(market.creator.address)}
               </Link>
-              · $25 bond at stake if the court rules the question ambiguous
+              {market.live?.creatorBond && BigInt(market.live.creatorBond) > 0n ? ` · $${Number(market.live.creatorBond) / 1e6} creator bond held; forfeited if the court rules the question ambiguous` : !IS_LIVE ? " · $25 bond at stake if the court rules the question ambiguous" : ""}
             </p>
           )}
         </header>
@@ -73,6 +67,7 @@ export default async function MarketPage(props: PageProps<"/market/[id]">) {
             </div>
           </div>
           {market.history.length > 1 ? <DottedLineChart points={market.history} /> : <p className="text-sm text-muted">Historical prices are unavailable. The odds above are a chain snapshot.</p>}
+          {market.historyCoverage && <p className="text-xs text-muted">{market.historyCoverage}</p>}
           <div className="flex flex-wrap gap-x-8 gap-y-2 border-t border-line pt-4">
             <span className="lbl">Volume <span className="text-ink">${market.volume.toLocaleString("en-US")}</span></span>
             <span className="lbl">Bettors <span className="text-ink">{market.bettors}</span></span>
@@ -80,7 +75,7 @@ export default async function MarketPage(props: PageProps<"/market/[id]">) {
           </div>
         </section>
 
-        {!IS_LIVE && <SharpSignal {...market.sharps} />}
+        {(!IS_LIVE || market.live?.sharpsAvailable) && <SharpSignal {...market.sharps} />}
         {market.live && <p className="lbl !text-[11px]">Chain {market.live.chainId} · block {market.live.block} · current snapshot</p>}
 
         {callsError ? <p role="status" className="card p-6 text-sm text-muted">Live calls could not be loaded.</p> : <CallsList calls={calls} />}
@@ -115,7 +110,7 @@ export default async function MarketPage(props: PageProps<"/market/[id]">) {
           <ul className="mt-4 divide-y divide-line">
             {bets.map((b, i) => (
               <li key={i} className="flex items-center gap-3 py-3 font-mono text-sm">
-                {b.r !== undefined && <LaurelBadge r={b.r} size={22} />}
+                {b.r !== undefined && <LaurelBadge r={b.r} rawR={b.rawR} size={22} />}
                 <Link href={`/profile/${b.address}`} className="w-28 text-ink">{shortAddress(b.address)}</Link>
                 <span className={`w-10 ${b.side ? "text-accent" : "text-ink"}`}>{b.side ? "YES" : "NO"}</span>
                 <span className="w-20 text-right">${b.amount.toLocaleString("en-US")}</span>
@@ -134,4 +129,17 @@ export default async function MarketPage(props: PageProps<"/market/[id]">) {
       </Suspense>
     </main>
   );
+}
+
+async function loadLive(id: number): Promise<{ market: Market | null; bets: Bet[]; calls: Call[]; betsError: boolean; callsError: boolean }> {
+  const fromChain = async () => {
+    const market = await readLiveMarket(id);
+    const [bets, calls] = await Promise.allSettled([readRecentBets(id), readCalls(id)]);
+    return { market, bets: bets.status === "fulfilled" ? bets.value : [], calls: calls.status === "fulfilled" ? calls.value : [],
+      betsError: bets.status === "rejected", callsError: calls.status === "rejected" };
+  };
+  return indexer.preferIndexer(async () => {
+    const page = await indexer.readMarketPage(id);
+    return page.market ? { ...page, betsError: false, callsError: false } : fromChain();
+  }, fromChain);
 }

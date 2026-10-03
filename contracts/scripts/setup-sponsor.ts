@@ -3,7 +3,7 @@
 //
 //   npx hardhat run scripts/setup-sponsor.ts --network monadTestnet
 //
-// Run it after seed-demo (which mints from the deployer while it is still the sponsor). The key
+// Seed uses the deployer or this dedicated sponsor as appropriate. The key
 // is written to contracts/.env.demo and web/.env.local (both git-ignored) and never printed.
 import { network } from "hardhat";
 import { readFileSync } from "node:fs";
@@ -19,7 +19,9 @@ const deployed = JSON.parse(readFileSync(`ignition/deployments/chain-${chainId}/
 const usd = await viem.getContractAt("KleosUSD", deployed["KleosModule#KleosUSD"] as Address);
 const [owner] = await viem.getWalletClients();
 
-const FUNDING = parseEther(process.env.KLEOS_SPONSOR_MON ?? "0.5");
+// Each funding attempt may send 0.3 MON (web/src/app/api/sponsor/route.ts).
+// 2 MON is a configurable demo reserve, not a guaranteed account or transaction count.
+const FUNDING = parseEther(process.env.KLEOS_SPONSOR_MON ?? "2");
 
 const key = (demoSecret("SPONSOR_PRIVATE_KEY") as Hex | undefined) ?? generatePrivateKey();
 const sponsor = privateKeyToAccount(key).address;

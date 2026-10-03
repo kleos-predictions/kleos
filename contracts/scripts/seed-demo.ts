@@ -2,12 +2,14 @@
 // Fresh deploys create no markets; this script anchors demo deadlines to the chain and records
 // every operation in contracts/.demo-state (git-ignored). Never delete its journal to retry.
 import { network } from "hardhat";
-import { isAddress, keccak256, parseEther, parseEventLogs, parseUnits, type Address } from "viem";
-import { LOCAL_CHAIN_ID, getDemoWallets } from "./demo-wallets.ts";
+import { isAddress, keccak256, parseEther, parseEventLogs, parseUnits, type Address, type Hex } from "viem";
+import { privateKeyToAccount } from "viem/accounts";
+import { LOCAL_CHAIN_ID, demoSecret, getDemoWallets } from "./demo-wallets.ts";
 import { DemoJournal, acquireJournalLock, contextId } from "./demo-journal.ts";
 import { demoDeployment } from "./demo-deployment.ts";
 import { DEMO_MARKETS, demoCloseTimes } from "./demo-markets.ts";
 import { resumeDemoResolution } from "./demo-lifecycle.ts";
+import { mintDemoTokens } from "./demo-funding.ts";
 
 const { viem } = await network.getOrCreate();
 const publicClient = await viem.getPublicClient();
@@ -24,10 +26,20 @@ try {
   const LOCAL = chainId === LOCAL_CHAIN_ID;
   const ownerAddress = owner.account.address;
   if ((await kleos.read.owner()).toLowerCase() !== ownerAddress.toLowerCase() ||
-      (await usd.read.sponsor()).toLowerCase() !== ownerAddress.toLowerCase() ||
       (await usd.read.market()).toLowerCase() !== kleos.address.toLowerCase() ||
       (await kleos.read.usd()).toLowerCase() !== usd.address.toLowerCase()) {
-    throw new Error("The connected account must own Kleos and sponsor its bound demo token.");
+    throw new Error("The connected account must own Kleos and use its bound demo token.");
+  }
+  // The dedicated sponsor must be exclusive to this run: pause the web faucet first.
+  // Keep main's sponsor handoff support without re-running journaled funding. Do not load
+  // sponsor custody when the deployer is still the minter (including the normal local demo).
+  const sponsorAddress = await usd.read.sponsor();
+  const sponsorKey = sponsorAddress.toLowerCase() === ownerAddress.toLowerCase()
+    ? undefined : demoSecret("SPONSOR_PRIVATE_KEY") as Hex | undefined;
+  const minter = sponsorAddress.toLowerCase() === ownerAddress.toLowerCase() ? owner.account
+    : sponsorKey ? privateKeyToAccount(sponsorKey) : undefined;
+  if (!minter || minter.address.toLowerCase() !== sponsorAddress.toLowerCase()) {
+    throw new Error(`KleosUSD's sponsor is ${sponsorAddress}; restore its matching sponsor custody before seeding.`);
   }
   // Do this before wallet creation/funding. An unjournaled historical seed cannot safely be
   // inferred from names or balances: neither proves whether reputation, mints and calls ran.
@@ -51,6 +63,8 @@ try {
   const usdAmount = (n: number) => parseUnits(String(n), 6);
   const wait = (hash: `0x${string}`) => publicClient.waitForTransactionReceipt({ hash, timeout: 120_000 });
   const operation = (key: string, send: () => Promise<`0x${string}`>, sender = ownerAddress) => journal.run(key, send, wait, sender);
+  const mint = (key: string, recipient: Address, amount: bigint) => mintDemoTokens(journal, key, minter.address,
+    () => usd.write.sponsorMint([recipient, amount], { account: minter }), wait);
 
   // Top up gas once per deployment, with receipt checks and crash-safe intent recording.
   if (!LOCAL) for (const [i, wallet] of wallets.entries()) {
@@ -96,7 +110,7 @@ try {
     const address = wallet.account.address;
     await operation(`persona:${i}:reputation`, () => kleos.write.seedReputation([address, parseEther(String(persona.r)), persona.resolved], { account: owner.account }));
     for (let offset = 0; offset < persona.cash; offset += 1000) {
-      await operation(`persona:${i}:mint:${offset}`, () => usd.write.sponsorMint([address, usdAmount(Math.min(persona.cash - offset, 1000))], { account: owner.account }));
+      await mint(`persona:${i}:mint:${offset}`, address, usdAmount(Math.min(persona.cash - offset, 1000)));
     }
     await operation(`persona:${i}:name`, () => social.write.setName([persona.name], { account: wallet.account }), address);
     for (const [betIndex, [marketId, side, amount, text]] of persona.bets.entries()) {
@@ -126,16 +140,16 @@ try {
   for (const [i, juror] of jurors.entries()) {
     await operation(`juror:${i}:reputation`, () => kleos.write.seedReputation([juror.account.address, parseEther("40"), 12], { account: owner.account }));
     await operation(`juror:${i}:join`, () => kleos.write.joinCourt({ account: juror.account }), juror.account.address);
-    await operation(`juror:${i}:mint`, () => usd.write.sponsorMint([juror.account.address, usdAmount(100)], { account: owner.account }));
+    await mint(`juror:${i}:mint`, juror.account.address, usdAmount(100));
   }
-  for (const [i, extra] of extras.entries()) await operation(`extra:${i}:mint`, () => usd.write.sponsorMint([extra.account.address, usdAmount(1000)], { account: owner.account }));
+  for (const [i, extra] of extras.entries()) await mint(`extra:${i}:mint`, extra.account.address, usdAmount(1000));
 
   // The optional recipient is immutable once this seed run starts; changing it would grant
   // extra authority and funding outside the original operation plan.
   if (recordedMe) {
     const me = recordedMe as Address;
     await operation("optional:reputation", () => kleos.write.seedReputation([me, parseEther("20"), 10], { account: owner.account }));
-    await operation("optional:mint", () => usd.write.sponsorMint([me, usdAmount(1000)], { account: owner.account }));
+    await mint("optional:mint", me, usdAmount(1000));
     await operation("optional:gas", () => owner.sendTransaction({ to: me, value: parseEther(LOCAL ? "1" : "0.05") }));
   }
 

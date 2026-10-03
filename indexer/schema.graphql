@@ -151,7 +151,10 @@ type Position {
   sharpNo: Boolean!
 }
 
-type Bet {
+# Composite index: the market page lists bets newest first.
+type Bet
+  @index(fields: ["market", ["timestamp", "DESC"]])
+  @index(fields: ["market", ["blockNumber", "DESC"], ["logIndex", "DESC"]]) {
   id: ID! # block_logIndex
   market: Market! @index
   trader: Trader! @index
@@ -170,7 +173,7 @@ type Bet {
 }
 
 # Both prices right after a bet, for the price chart.
-type PricePoint {
+type PricePoint @index(fields: ["market", ["blockNumber", "DESC"], ["logIndex", "DESC"]]) {
   id: ID! # block_logIndex
   market: Market! @index
   timestamp: Int! @index
@@ -185,7 +188,7 @@ type Trader {
   name: String # KleosSocial username, unique, 3–20 chars of a–z, 0–9 and _
   followerCount: Int!
   followingCount: Int!
-  r: BigInt! # vested reputation
+  r: BigInt! @index # vested reputation; the leaderboard sorts by it
   pending: BigInt! # gains waiting to vest
   resolvedBets: BigInt # exact uint32 history, or null after an unrecoverable nested admin event
   resolvedBetsSource: HistorySource!
@@ -213,7 +216,9 @@ type Trader {
 }
 
 # Every ReputationChanged event, so anyone can rebuild R and check the math.
-type ReputationChange {
+type ReputationChange
+  @index(fields: ["trader", ["timestamp", "DESC"]])
+  @index(fields: ["trader", ["blockNumber", "DESC"], ["logIndex", "DESC"]]) {
   id: ID! # block_logIndex
   trader: Trader! @index
   market: Market # unset for Admin changes (marketId 0)
@@ -247,7 +252,7 @@ type BonusClaim {
   contractAddress: String!
 }
 
-type Vesting {
+type Vesting @index(fields: ["trader", ["blockNumber", "DESC"], ["logIndex", "DESC"]]) {
   id: ID! # block_logIndex
   trader: Trader! @index
   amount: BigInt!
@@ -279,7 +284,11 @@ type OwnershipChange {
 
 # A public one-line reason posted with a bet. Id = the callId Kleos numbers from 1, which
 # KleosSocial votes use too.
-type Call {
+type Call
+  @index(fields: ["market", ["timestamp", "DESC"]])
+  @index(fields: ["trader", ["timestamp", "DESC"]])
+  @index(fields: ["market", ["blockNumber", "DESC"], ["logIndex", "DESC"]])
+  @index(fields: ["trader", ["blockNumber", "DESC"], ["logIndex", "DESC"]]) {
   id: ID!
   market: Market! @index
   trader: Trader! @index
@@ -292,7 +301,18 @@ type Call {
   downs: Int!
   timestamp: Int! @index
   txHash: String!
+  blockNumber: Int!
+  logIndex: Int!
+  contractAddress: String!
   votes: [CallVote!]! @derivedFrom(field: "call")
+}
+
+# KleosSocial votes cast on a callId before Kleos posted that call (KleosSocial doesn't check
+# that it exists). CallPosted seeds Call.ups/downs from it by id, then deletes it. Id: callId.
+type PendingCallTally {
+  id: ID!
+  ups: Int!
+  downs: Int!
 }
 
 # KleosSocial: one address following another. Id: follower_followee. Deleted on unfollow.

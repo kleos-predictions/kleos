@@ -8,7 +8,7 @@ import { HAS_LOGS_RPC, KLEOS_ADDRESS, SOCIAL_ADDRESS, chain, logsClient, publicC
 import { HAS_HYPERSYNC, hypersyncEvents } from "./hypersync";
 import { kleosSocialAbi } from "./abi";
 import { readBettorDiscovery } from "./bettors";
-import type { Bet, Call, FeedItem, Market, RepChange, Trader } from "./data";
+import { liveStatus, type Bet, type Call, type FeedItem, type Market, type RepChange, type Trader } from "./data";
 
 const WAD = 1e18;
 const DEPLOY_BLOCK = BigInt(process.env.NEXT_PUBLIC_KLEOS_DEPLOY_BLOCK ?? "0");
@@ -17,31 +17,18 @@ const READ_BUDGET_MS = 20_000;
 const MAX_LOG_ROWS = 10_000;
 const DAY = new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric", timeZone: "UTC" });
 
-/**
- * Event reads over block ranges. With HyperRPC (or the local node) one call covers everything.
- * The public Monad RPC allows 100 blocks per eth_getLogs, so without it we fan out in parallel
- * batches. The Envio indexer replaces this for long histories.
- */
+/** Public RPCs cannot serve an unbounded deployment history. Lists need an index or archive source. */
+export class NoLogSource extends Error {
+  constructor() { super("No log source: set INDEXER_URL, ENVIO_API_TOKEN or MONAD_LOGS_RPC to read event history"); }
+}
+
 async function inChunks<T>(read: (fromBlock: bigint, toBlock: bigint) => Promise<T[]>, latest: bigint, deadline: number): Promise<T[]> {
   if (!HAS_DEPLOY_BLOCK) throw new Error("Live history needs its deployment block.");
   if (latest < DEPLOY_BLOCK) return [];
-  if (HAS_LOGS_RPC) {
-    const logs = await withinBudget(read(DEPLOY_BLOCK, latest), deadline);
-    if (logs.length > MAX_LOG_ROWS) throw new Error("History exceeds the application row budget. Use the indexer.");
-    return logs;
-  }
-  if (latest - DEPLOY_BLOCK > 50_000n) throw new Error("History exceeds the public RPC scan budget. Configure the indexer or HyperSync.");
-  const SIZE = 100n;
-  const out: T[] = [];
-  for (let from = DEPLOY_BLOCK; from <= latest; from += SIZE * 8n) {
-    if (Date.now() >= deadline) throw new Error("History read timed out.");
-    const ranges: [bigint, bigint][] = [];
-    for (let f = from; f <= latest && f < from + SIZE * 8n; f += SIZE) ranges.push([f, f + SIZE - 1n < latest ? f + SIZE - 1n : latest]);
-    const batch = await withinBudget(Promise.all(ranges.map(([f, t]) => read(f, t))), deadline);
-    for (const logs of batch) out.push(...logs);
-    if (out.length > MAX_LOG_ROWS) throw new Error("History exceeds the application row budget. Use the indexer.");
-  }
-  return out;
+  if (!HAS_LOGS_RPC) throw new NoLogSource();
+  const logs = await withinBudget(read(DEPLOY_BLOCK, latest), deadline);
+  if (logs.length > MAX_LOG_ROWS) throw new Error("History exceeds the application row budget. Use the indexer.");
+  return logs;
 }
 
 async function withinBudget<T>(promise: Promise<T>, deadline: number): Promise<T> {
@@ -73,8 +60,10 @@ async function kleosEvents<E extends KleosEvent>(eventName: E, args: Record<stri
     latest, deadline,
   );
   const times = new Map<bigint, number>();
-  for (const log of logs as { blockNumber: bigint }[]) {
-    if (!times.has(log.blockNumber)) times.set(log.blockNumber, Number((await withinBudget(publicClient.getBlock({ blockNumber: log.blockNumber }), deadline)).timestamp));
+  const blocks = [...new Set((logs as { blockNumber: bigint }[]).map((log) => log.blockNumber))];
+  for (let i = 0; i < blocks.length; i += 4) {
+    const stamps = await withinBudget(Promise.all(blocks.slice(i, i + 4).map(async blockNumber => [blockNumber, Number((await publicClient.getBlock({ blockNumber })).timestamp)] as const)), deadline);
+    for (const [blockNumber, timestamp] of stamps) times.set(blockNumber, timestamp);
   }
   return (logs as unknown as TimedLog<E>[]).map((l) => ({ ...l, timestamp: times.get(l.blockNumber)! }));
 }
@@ -86,6 +75,7 @@ export type LiveProfile = {
   vestAt: number;
   asOfBlock: string;
   historyComplete: boolean;
+  historyCoverage?: string;
   activationMin: number;
   multiplier: number;
   pending: number;
@@ -97,10 +87,9 @@ export type LiveProfile = {
   historyError: boolean;
 };
 
-export async function readProfile(user: Address): Promise<LiveProfile> {
+export async function readProfileSnapshot(user: Address, atBlock?: bigint): Promise<Omit<LiveProfile, "name" | "history" | "historyError" | "historyComplete" | "wins" | "losses">> {
   await connection(); // live chain data: render per request, never at build time
-  const deadline = Date.now() + READ_BUDGET_MS;
-  const blockNumber = await publicClient.getBlockNumber();
+  const blockNumber = atBlock ?? await publicClient.getBlockNumber();
   const k = { address: KLEOS_ADDRESS!, abi: kleosAbi, blockNumber } as const;
   const [rep, nMin, mult] = await Promise.all([
     publicClient.readContract({ ...k, functionName: "reputation", args: [user] }),
@@ -108,6 +97,16 @@ export async function readProfile(user: Address): Promise<LiveProfile> {
     publicClient.readContract({ ...k, functionName: "multiplierOf", args: [user] }),
   ]);
 
+  return {
+    r: Number(rep.r) / WAD, rawR: rep.r.toString(), vestAt: Number(rep.vestAt), asOfBlock: blockNumber.toString(), activationMin: Number(nMin), multiplier: Number(mult) / WAD,
+    pending: Number(rep.pending) / WAD, resolvedBets: rep.resolvedBets, flagged: rep.flagged,
+  };
+}
+
+export async function readProfile(user: Address): Promise<LiveProfile> {
+  const snapshot = await readProfileSnapshot(user);
+  const blockNumber = BigInt(snapshot.asOfBlock);
+  const deadline = Date.now() + READ_BUDGET_MS;
   let history: RepChange[] = [];
   let historyError = false;
   try {
@@ -165,13 +164,11 @@ export async function readProfile(user: Address): Promise<LiveProfile> {
   }
 
   const bets = history.filter((h) => h.isBet);
-  const name = (await readNames([user]).catch(() => new Map<string, string>())).get(user.toLowerCase());
+  const name = (await readNames([user], blockNumber).catch(() => new Map<string, string>())).get(user.toLowerCase());
   return {
     name,
-    r: Number(rep.r) / WAD, rawR: rep.r.toString(), vestAt: Number(rep.vestAt), asOfBlock: blockNumber.toString(), historyComplete: !historyError, activationMin: Number(nMin), multiplier: Number(mult) / WAD,
-    pending: Number(rep.pending) / WAD,
-    resolvedBets: rep.resolvedBets,
-    flagged: rep.flagged,
+    ...snapshot,
+    historyComplete: !historyError,
     // By side vs outcome, not by the sign of ΔR: a loss at R = 0 takes nothing and emits a delta of 0.
     wins: bets.filter((h) => h.side === h.outcome).length,
     losses: bets.filter((h) => h.side !== h.outcome).length,
@@ -234,7 +231,8 @@ async function withNames<T extends { address: string }>(rows: T[], blockNumber?:
 }
 
 export async function readCalls(marketId: number, limit = 10): Promise<Call[]> {
-  return withNames((await readCallLogs(marketId, limit)).map((x) => x.call));
+  const rows = await readCallLogs(marketId, limit);
+  return withNames(rows.map((x) => x.call), rows[0]?.blockNumber);
 }
 
 export async function readFeed(limit = 50, user?: Address, filter: FeedFilter = {}): Promise<FeedItem[]> {
@@ -270,29 +268,29 @@ async function readMarketAt(id: number, blockNumber: bigint, owner: Address): Pr
   ]);
   const category = await publicClient.readContract({ ...k, functionName: "categoryName", args: [m.category] });
   const byTeam = m.creator.toLowerCase() === owner.toLowerCase();
-  const creatorName = byTeam ? undefined : (await readNames([m.creator]).catch(() => new Map<string, string>())).get(m.creator.toLowerCase());
+  const creatorName = (await readNames([m.creator], blockNumber).catch(() => new Map<string, string>())).get(m.creator.toLowerCase());
   const closeMs = Number(m.closeTime) * 1000;
-  const status: Market["status"] = m.state === 3 ? "resolved" : m.state >= 1 ? "dispute" : closeMs <= Date.now() ? "closed" : closeMs - Date.now() < 86_400_000 ? "closing" : "live";
+  const status = liveStatus((["Open", "Proposed", "Disputed", "Resolved"] as const)[m.state], closeMs);
   return {
     id, question: m.question, category: category as Market["category"], status,
     oracle: m.oracle, criteria: m.criteria,
-    creator: byTeam ? undefined : { address: m.creator, name: creatorName },
-    type: byTeam ? "Curated" : "Community market",
+    creator: { address: m.creator, name: creatorName },
+    type: byTeam ? "Created by current owner" : "On-chain market",
     closesAt: new Date(closeMs).toLocaleString("en-US", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit", timeZone: "UTC" }) + " UTC",
     volume: Number(m.yesMoney + m.noMoney) / 1e6, bettors: Number(bettors.count),
     repYes: Number(repYes) / WAD, moneyYes: Number(moneyYes) / WAD,
     history: [], sharps: { yes: 0, no: 0 },
     stage: m.state === 3 ? 4 : m.state === 2 ? 3 : m.state === 1 ? 2 : closeMs <= Date.now() ? 1 : 0,
-    live: { block: blockNumber.toString(), chainId: chain.id, contract: KLEOS_ADDRESS!, closeTime: Number(m.closeTime), state: m.state, sharpsAvailable: false,
+    live: { block: blockNumber.toString(), chainId: chain.id, contract: KLEOS_ADDRESS!, closeTime: Number(m.closeTime), state: m.state, sharpsAvailable: false, voided: m.voided, outcome: m.outcome, creatorBond: m.creatorBond.toString(),
       yesMoney: m.yesMoney.toString(), noMoney: m.noMoney.toString(), yesEff: m.yesEff.toString(), noEff: m.noEff.toString() },
   };
 }
 
 /** Null means the id does not exist; failures stay failures, never sample transaction data. */
-export async function readLiveMarket(id: number): Promise<Market | null> {
+export async function readLiveMarket(id: number, atBlock?: bigint): Promise<Market | null> {
   await connection();
   if (!Number.isSafeInteger(id) || id < 1) return null;
-  const blockNumber = await publicClient.getBlockNumber();
+  const blockNumber = atBlock ?? await publicClient.getBlockNumber();
   const k = { address: KLEOS_ADDRESS!, abi: kleosAbi, blockNumber } as const;
   const [count, owner] = await Promise.all([
     publicClient.readContract({ ...k, functionName: "marketCount" }),
@@ -302,10 +300,10 @@ export async function readLiveMarket(id: number): Promise<Market | null> {
 }
 
 /** Latest real markets, with bounded discovery and concurrency. No fixture prefix. */
-export async function readExtraMarkets(fromId: number, limit = 50): Promise<Market[]> {
+export async function readExtraMarkets(fromId: number, limit = 50, atBlock?: bigint): Promise<Market[]> {
   await connection();
   if (!Number.isSafeInteger(fromId) || fromId < 1 || !Number.isInteger(limit) || limit < 1 || limit > 100) throw new Error("Invalid market page.");
-  const blockNumber = await publicClient.getBlockNumber();
+  const blockNumber = atBlock ?? await publicClient.getBlockNumber();
   const k = { address: KLEOS_ADDRESS!, abi: kleosAbi, blockNumber } as const;
   const [count, owner] = await Promise.all([
     publicClient.readContract({ ...k, functionName: "marketCount" }),
@@ -344,7 +342,7 @@ export async function readLeaderboard(limit = 50): Promise<{ traders: (Trader & 
   const observed = [...bets.map((l) => ({ user: l.args.user!, block: l.blockNumber, index: l.logIndex })), ...changes.map((l) => ({ user: l.args.user!, block: l.blockNumber, index: l.logIndex }))]
     .sort((a, b) => Number(b.block - a.block) || b.index - a.index);
   const addresses = [...new Set(observed.map((l) => l.user.toLowerCase()))].slice(0, 100) as Address[];
-  const names = await readNames(addresses).catch(() => new Map<string, string>());
+  const names = await readNames(addresses, blockNumber).catch(() => new Map<string, string>());
   const traders: (Trader & { multiplier: number; rawR: string; flagged: boolean })[] = [];
   for (let i = 0; i < addresses.length; i += 4) {
     const batch = await withinBudget(Promise.all(addresses.slice(i, i + 4).map(async (address) => {

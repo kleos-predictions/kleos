@@ -54,7 +54,10 @@ describe("markets", () => {
     ]);
 
     // Calls are keyed by the contract's callId, the same number KleosSocial votes use.
-    t.expect(await indexer.Call.getOrThrow("1")).toMatchObject({ text: "ETF flows", result: "Right", txHash: hash });
+    t.expect(await indexer.Call.getOrThrow("1")).toMatchObject({
+      text: "ETF flows", result: "Right", txHash: hash,
+      blockNumber: 4, logIndex: 1, contractAddress: KLEOS.toLowerCase(),
+    });
     t.expect((await indexer.Call.getOrThrow("2")).result).toBe("Wrong");
     t.expect((await indexer.Call.getOrThrow("3")).result).toBe("Refunded");
 
@@ -450,5 +453,35 @@ describe("social", () => {
     );
     // addr(9) never traded, but has a Trader row so CallVote.voter resolves.
     t.expect(await indexer.Trader.get(addr(9).toLowerCase())).toBeDefined();
+  });
+
+  it("call votes: a pre-call vote changed, then cleared, before the call leaves no tally", async (t) => {
+    const hash = tx("w");
+    const indexer = createTestIndexer();
+    await run(indexer, [
+      categoryAdded(), marketCreated(),
+      social("CallVoted", 3, { callId: 1n, voter: bob, vote: 1n }),
+      social("CallVoted", 3, { callId: 1n, voter: carol, vote: -1n }, 1),
+      social("CallVoted", 4, { callId: 1n, voter: bob, vote: -1n }), // up → down
+      social("CallVoted", 5, { callId: 1n, voter: bob, vote: 0n }), // cleared
+      betPlaced({ user: alice, side: true, amount: usd(10), n: 6, hash }),
+      callPosted({ callId: 1n, user: alice, side: true, text: "Up", n: 6, logIndex: 1, hash }),
+    ]);
+    t.expect(await indexer.Call.getOrThrow("1")).toMatchObject({ ups: 0, downs: 1 });
+    t.expect((await indexer.CallVote.getAll()).map((v) => [v.voter_id, v.value])).toEqual([[carol.toLowerCase(), -1]]);
+    // The pending tally is consumed once the call is posted.
+    t.expect(await indexer.PendingCallTally.get("1")).toBeUndefined();
+  });
+
+  it("clearing every pre-call vote removes the empty tally and later votes start clean", async (t) => {
+    const indexer = createTestIndexer();
+    await run(indexer, [
+      social("CallVoted", 1, { callId: 999n, voter: alice, vote: 1n }),
+      social("CallVoted", 2, { callId: 999n, voter: alice, vote: 0n }),
+    ]);
+    t.expect(await indexer.PendingCallTally.get("999")).toBeUndefined();
+    t.expect(await indexer.CallVote.getAll()).toHaveLength(0);
+    await run(indexer, [social("CallVoted", 3, { callId: 999n, voter: bob, vote: -1n })]);
+    t.expect(await indexer.PendingCallTally.getOrThrow("999")).toMatchObject({ ups: 0, downs: 1 });
   });
 });

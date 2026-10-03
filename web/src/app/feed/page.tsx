@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { sampleFeed, type FeedItem } from "@/lib/data";
 import { IS_LIVE } from "@/lib/chain";
 import { readFeed } from "@/lib/onchain";
+import * as indexer from "@/lib/indexer";
 import { FeedList } from "@/components/feed-list";
 
 export const metadata: Metadata = {
@@ -12,7 +13,7 @@ export const metadata: Metadata = {
 export default async function FeedPage() {
   let items: FeedItem[] = sampleFeed();
   let unavailable = false;
-  if (IS_LIVE) items = await readFeed().catch(() => { unavailable = true; return []; });
+  if (IS_LIVE) items = await indexer.preferIndexer(indexer.readFeed, readFeed).catch(() => { unavailable = true; return []; });
 
   return (
     <main className="mx-auto flex w-full max-w-[860px] flex-1 flex-col gap-7 px-4 pt-10 pb-16 md:px-12">
@@ -24,7 +25,7 @@ export default async function FeedPage() {
           Calls attached to bets. Results compare the chosen side with the recorded outcome. R badges show current reputation.
         </p>
       </header>
-      {unavailable ? <p role="alert" className="card p-6 text-muted">Calls could not be read. Reload to try again.</p> : <><p className="lbl">{IS_LIVE ? "Latest 50 matching calls per filter · bounded chain reads" : "Sample calls · demo mode"}</p><FeedList items={items} queryLive={IS_LIVE} /></>}
+      {unavailable ? <p role="alert" className="card p-6 text-muted">Calls could not be read. Reload to try again.</p> : <><p className="lbl">{IS_LIVE ? "Latest 50 matching calls per filter · bounded indexed or chain reads" : "Sample calls · demo mode"}</p><FeedList items={items} queryLive={IS_LIVE} /></>}
     </main>
   );
 }

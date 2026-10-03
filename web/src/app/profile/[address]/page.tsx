@@ -6,6 +6,7 @@ import { explainChange, multiplier, PARAMS } from "@/lib/math";
 import { tierOf, tierOfWad, TIER_NAMES } from "@/lib/tiers";
 import { IS_LIVE, IS_LOCAL_CHAIN, addressUrl, shortAddress, txUrl } from "@/lib/chain";
 import { readFeed, readProfile } from "@/lib/onchain";
+import * as indexer from "@/lib/indexer";
 import { FeedList } from "@/components/feed-list";
 import { LaurelBadge } from "@/components/laurel";
 import { DotNumber } from "@/components/dot-number";
@@ -28,28 +29,34 @@ type View = {
   asOfBlock?: string;
   multiplier?: number;
   activationMin?: number;
+  historyCoverage?: string;
 };
 
-async function load(address: Address): Promise<View | null> {
+async function load(address: Address): Promise<{ view: View; calls: FeedItem[]; callsError: boolean } | null> {
   if (IS_LIVE) {
+    const fromChain = async () => {
+      const [profile, calls] = await Promise.allSettled([readProfile(address), readFeed(50, address)]);
+      if (profile.status === "rejected") throw profile.reason;
+      return { view: profile.value, calls: calls.status === "fulfilled" ? calls.value : [], callsError: calls.status === "rejected" };
+    };
     try {
-      return await readProfile(address);
-    } catch {
-      return null;
-    }
+      return await indexer.preferIndexer(async () => {
+        const { profile, calls } = await indexer.readProfilePage(address);
+        return { view: profile, calls, callsError: false };
+      }, fromChain);
+    } catch { return null; }
   }
   const trader = getTrader(address);
-  return { ...trader, pending: 0, resolvedBets: trader.wins + trader.losses, flagged: false, history: reputationHistory(trader), historyError: false };
+  return { view: { ...trader, pending: 0, resolvedBets: trader.wins + trader.losses, flagged: false, history: reputationHistory(trader), historyError: false }, calls: sampleFeed(address), callsError: false };
 }
 
 export default async function ProfilePage(props: PageProps<"/profile/[address]">) {
   const { address } = await props.params;
   if (!isAddress(address)) notFound();
 
-  const v = await load(address);
-  if (!v) return <main className="mx-auto w-full max-w-[860px] px-4 py-10"><h1 className="font-mono text-xl">{shortAddress(address)}</h1><p role="alert" className="card mt-5 p-6 text-muted">Profile data could not be read. Reload to try again.</p></main>;
-  let callsError = false;
-  const calls: FeedItem[] = IS_LIVE ? await readFeed(50, address).catch(() => { callsError = true; return []; }) : sampleFeed(address);
+  const loaded = await load(address);
+  if (!loaded) return <main className="mx-auto w-full max-w-[860px] px-4 py-10"><h1 className="font-mono text-xl">{shortAddress(address)}</h1><p role="alert" className="card mt-5 p-6 text-muted">Profile data could not be read. Reload to try again.</p></main>;
+  const { view: v, calls, callsError } = loaded;
   const tier = v.rawR ? tierOfWad(BigInt(v.rawR)) : tierOf(v.r);
   const activationMin = v.activationMin ?? PARAMS.nMin;
   const activated = v.resolvedBets >= activationMin;
@@ -98,6 +105,7 @@ export default async function ProfilePage(props: PageProps<"/profile/[address]">
         {points.length >= 2 && <ReputationChart points={points} height={150} />}
         <p className="text-xs text-muted">{IS_LIVE ? `Snapshot at block ${v.asOfBlock}. R includes bets, court duties and administrator adjustments. Counts cover reputation-scored side results; a hedge can contribute to both.` : "Sample profile · demo mode"}</p>
       </section>
+      {v.historyCoverage && <p className="text-xs text-muted">{v.historyCoverage}</p>}
       {IS_LIVE && <ReputationActions />}
 
       <section className="flex flex-col gap-4">

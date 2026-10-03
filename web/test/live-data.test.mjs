@@ -19,7 +19,7 @@ function harness() {
       throw new Error(`Unexpected ${params.functionName}`);
     }
   };
-  const stubs={"next/server":{connection:async()=>{}},"./abi":{kleosAbi:[],kleosSocialAbi:[]},"./chain":{HAS_LOGS_RPC:true,KLEOS_ADDRESS:K,SOCIAL_ADDRESS:K,chain:{id:31337},logsClient:client,publicClient:client},"./hypersync":{HAS_HYPERSYNC:false},"./bettors":{}};
+  const stubs={"next/server":{connection:async()=>{}},"./abi":{kleosAbi:[],kleosSocialAbi:[]},"./chain":{HAS_LOGS_RPC:true,KLEOS_ADDRESS:K,SOCIAL_ADDRESS:K,chain:{id:31337},logsClient:client,publicClient:client},"./hypersync":{HAS_HYPERSYNC:false},"./bettors":{},"./data":{liveStatus:()=>{throw new Error("Unexpected market-status read in feed tests");}}};
   const source=readFileSync(new URL("../src/lib/onchain.ts",import.meta.url),"utf8");
   const output=ts.transpileModule(source,{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2020}}).outputText;
   const loadedModule={exports:{}};

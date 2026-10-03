@@ -4,6 +4,7 @@ import { multiplier } from "@/lib/math";
 import { tierOf, tierOfWad, TIER_NAMES } from "@/lib/tiers";
 import { IS_LIVE, shortAddress } from "@/lib/chain";
 import { readLeaderboard } from "@/lib/onchain";
+import * as indexer from "@/lib/indexer";
 import { LaurelBadge } from "@/components/laurel";
 import { DotNumber } from "@/components/dot-number";
 
@@ -13,7 +14,7 @@ export default async function LeaderboardPage() {
   let unavailable = false;
   if (IS_LIVE) {
     try {
-      const snapshot = await readLeaderboard();
+      const snapshot = await indexer.preferIndexer(indexer.readLeaderboard, readLeaderboard);
       traders = snapshot.traders;
       coverage = `Block ${snapshot.asOfBlock}. ${snapshot.coverage}`;
     } catch { traders = []; unavailable = true; coverage = "Leaderboard data unavailable."; }

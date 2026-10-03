@@ -8,7 +8,7 @@ Each market shows money and reputation-weighted pool shares. Principal payout de
 
 Security review is ongoing. Existing testnet contracts do not acquire source repairs automatically. This prototype is not ready for production or real funds.
 
-The full local contract and operator suite currently has **109 passing tests** (60 contract tests and 49 operator tests). The web has 48 regression tests; the indexer has 34 simulated tests passing, with two chain integrations skipped. Verification details are in the repair report. Tests do not certify commercial demand, physical passkey behavior or mechanism security.
+The full local contract and operator suite currently has **113 passing tests** (60 contract tests and 53 operator tests). The web has 72 regression tests; the indexer has 36 simulations and one fresh actual local handler replay passing. Testnet integration and hosted GraphQL acceptance remain unexecuted. Tests do not certify commercial demand, physical passkey behavior or mechanism security.
 
 ## Implemented mechanics
 
@@ -48,6 +48,12 @@ npm run court-bot
 Use separate terminals for the node and web server. Demo catalog times are set relative to the chain when seeded. Seed and court scripts have durable local journals; replay or reset rules are documented in `contracts/scripts/README.md`. Replay cannot finish an unbroadcast bet after its fixed close time.
 
 Testnet deployment, signed actions and private-key use require the owner's explicit authorization for that specific action. Secrets belong in server env variables; only `NEXT_PUBLIC_*` configuration reaches the browser.
+
+## Data flow
+
+The server-only `INDEXER_URL` enables the GraphQL adapter in `web/src/lib/indexer.ts`. The adapter validates processing checkpoints, chain/deployment configuration, freshness and exact/unknown field provenance before serving indexed data. The repaired schema still requires hosted replay and acceptance. Contract reads remain authoritative for actions. If indexed data is unavailable or incompatible, bounded contract/HyperSync reads provide the live fallback; missing live data is not replaced by samples.
+
+Changed schema and handlers require replay and hosted acceptance; a source adapter does not prove the current deployment uses it.
 
 ## Repository and next decisions
 

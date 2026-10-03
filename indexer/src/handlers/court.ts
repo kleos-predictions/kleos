@@ -53,11 +53,12 @@ indexer.onEvent(
       verdict: undefined,
       failed: false,
     });
-    for (const juror of jurors) {
-      const trader = await getTrader(context, juror);
+    // Loaded together so Envio can batch the reads; a juror sits at most once per round.
+    const traders = await Promise.all(jurors.map((juror) => getTrader(context, juror)));
+    for (const trader of traders) {
       context.Trader.set({ ...trader, juryDuties: trader.juryDuties + 1 });
       context.JurorVote.set({
-        id: seatId(marketId, round, juror), round_id: id, juror_id: trader.id,
+        id: seatId(marketId, round, trader.id), round_id: id, juror_id: trader.id,
         committed: false, commitment: undefined, commitmentSource: "Genesis", vote: 0,
       });
     }

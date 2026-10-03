@@ -107,11 +107,11 @@ indexer.onEvent(
   { contract: "Kleos", event: "CallPosted", fields: { block: ["timestamp"], transaction: ["hash"] } },
   async ({ event, context }) => {
     const p = event.params;
-    const [m, trader, protocol, earlier] = await Promise.all([
+    const [m, trader, protocol, pending] = await Promise.all([
       context.Market.getOrThrow(p.marketId.toString()),
       getTrader(context, p.user),
       getProtocol(context),
-      context.CallVote.getWhere({ call_id: { _eq: p.callId.toString() } }),
+      context.PendingCallTally.get(p.callId.toString()),
     ]);
     context.Call.set({
       id: p.callId.toString(), // numbered by Kleos; KleosSocial votes use the same id
@@ -122,12 +122,16 @@ indexer.onEvent(
       entryPrice: p.entryPrice,
       text: p.text,
       result: "Open",
-      // Votes can come in before the call itself, so start from whatever is already there.
-      ups: earlier.filter((v) => v.value > 0).length,
-      downs: earlier.filter((v) => v.value < 0).length,
+      // Votes can come in before the call itself (social.ts tallies them by callId), so start there.
+      ups: pending?.ups ?? 0,
+      downs: pending?.downs ?? 0,
       timestamp: event.block.timestamp,
       txHash: event.transaction.hash,
+      blockNumber: event.block.number,
+      logIndex: event.logIndex,
+      contractAddress: event.srcAddress.toLowerCase(),
     });
+    if (pending) context.PendingCallTally.deleteUnsafe(pending.id);
     context.Market.set({ ...m, callCount: m.callCount + 1 });
     context.Trader.set({ ...trader, callCount: trader.callCount + 1 });
     context.Protocol.set({ ...protocol, callCount: protocol.callCount + 1 });

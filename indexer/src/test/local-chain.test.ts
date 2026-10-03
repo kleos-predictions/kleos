@@ -4,12 +4,19 @@
 // positions are checked too. Needs the local stack deployed and seeded (dev-stack skill); skips
 // otherwise. The live-testnet counterpart is testnet.test.ts.
 import { readFileSync } from "node:fs";
+import { isAbsolute, resolve } from "node:path";
+import { pathToFileURL } from "node:url";
 import { describe, it } from "vitest";
 import { createTestIndexer } from "envio";
 import { createPublicClient, http, type Abi, type Address } from "viem";
 
 const RPC = process.env.KLEOS_TEST_RPC ?? "http://127.0.0.1:8545";
-const CONTRACTS = new URL("../../../contracts/", import.meta.url);
+// An isolated acceptance stack can supply public artifacts/deployment records without
+// copying or modifying the repository's Ignition state. Never read its env or wallet files.
+const contractsOverride = process.env.KLEOS_TEST_CONTRACTS_DIR;
+if (contractsOverride && !isAbsolute(contractsOverride)) throw new Error("KLEOS_TEST_CONTRACTS_DIR must be absolute");
+const CONTRACTS = contractsOverride ? pathToFileURL(`${resolve(contractsOverride)}/`) : new URL("../../../contracts/", import.meta.url);
+const requireLocal = process.env.KLEOS_REQUIRE_LOCAL === "1";
 const client = createPublicClient({ transport: http(RPC) });
 
 const load = (path: string) => JSON.parse(readFileSync(new URL(path, CONTRACTS), "utf8"));
@@ -28,11 +35,13 @@ async function findContracts(): Promise<{ kleos: Contract; social: Contract } | 
       kleos: { address: kleos, abi: load("artifacts/src/Kleos.sol/Kleos.json").abi as Abi },
       social: { address: social, abi: load("artifacts/src/KleosSocial.sol/KleosSocial.json").abi as Abi },
     };
-  } catch {
+  } catch (err) {
+    if (requireLocal) throw err;
     return null;
   }
 }
 const found = await findContracts();
+if (requireLocal && !found) throw new Error("Required local acceptance chain/contracts are unavailable");
 const none: Contract = { address: "0x", abi: [] };
 const { kleos, social } = found ?? { kleos: none, social: none };
 
@@ -44,6 +53,11 @@ describe.skipIf(!found)("seeded local chain", () => {
     const indexer = createTestIndexer();
     await indexer.process({ chains: { 31337: { startBlock: 0, endBlock: Number(blockNumber) } } });
     const coverage = { historyChecked: 0, historyUnknown: 0, deadlineChecked: 0, deadlineUnknown: 0, commitCountsChecked: 0, commitCountsUnknown: 0, claimStatesChecked: 0 };
+    const config = await indexer.ContractConfiguration.getOrThrow(kleos.address.toLowerCase());
+    const periods = await Promise.all(["DISPUTE_WINDOW", "VEST_PERIOD", "N_MIN", "COURT_PERIOD"].map((name) => read<bigint>(kleos, name)));
+    t.expect(config.source, "local direct-creation configuration").toBe("DirectCreation");
+    t.expect([config.disputeWindow, config.vestPeriod, config.nMin, config.courtPeriod], "deployment immutables").toEqual(periods);
+    t.expect((await indexer.Protocol.getOrThrow("kleos")).owner, "current owner").toBe((await read<Address>(kleos, "owner")).toLowerCase());
 
     // Markets: pools, prices and distinct bettors.
     const count = await read<bigint>(kleos, "marketCount");
@@ -120,6 +134,13 @@ describe.skipIf(!found)("seeded local chain", () => {
           t.expect(round.commits, `round ${round.id} current commitments`).toBe(commits.filter((c) => BigInt(c) !== 0n).length);
         }
         t.expect(round.reveals, `round ${round.id} reveals`).toBe(votes.filter((v) => v !== 0).length);
+        t.expect([round.yes, round.no, round.ambiguous], `round ${round.id} tally`).toEqual([1, 2, 3].map((vote) => votes.filter((v) => v === vote).length));
+        for (let i = 0; i < jury.length; i++) {
+          const seat = await indexer.JurorVote.getOrThrow(`${round.id}_${jury[i]!.toLowerCase()}`);
+          t.expect(seat.vote, `seat ${seat.id} vote`).toBe(votes[i]);
+          if (seat.committed !== undefined) t.expect(seat.committed, `seat ${seat.id} committed`).toBe(BigInt(commits[i]!) !== 0n);
+          if (seat.commitment !== undefined) t.expect(seat.commitment, `seat ${seat.id} commitment`).toBe(commits[i]);
+        }
         // A round is failed when a later one was drawn, or when the court voided the market without a verdict.
         t.expect(round.failed, `round ${round.id} failed`).toBe(r < court.round || (m.voided && m.verdict === undefined));
       }
@@ -136,6 +157,12 @@ describe.skipIf(!found)("seeded local chain", () => {
     const logs = await client.getContractEvents({ ...kleos, eventName: "CallPosted", fromBlock: 0n, toBlock: blockNumber });
     const expected = logs.map((l) => (l.args as { callId: bigint }).callId.toString());
     t.expect(calls.map((c) => c.id).sort()).toEqual(expected.sort());
+    for (const log of logs) {
+      const call = await indexer.Call.getOrThrow((log.args as { callId: bigint }).callId.toString());
+      t.expect([call.blockNumber, call.logIndex, call.contractAddress, call.txHash], `call ${call.id} provenance`).toEqual([
+        Number(log.blockNumber), log.logIndex, kleos.address.toLowerCase(), log.transactionHash,
+      ]);
+    }
     // The seed votes on its calls; with matching ids those votes are visible.
     const [ups, downs] = await read<[bigint[], bigint[], number[]]>(social, "tallies", [calls.map((c) => BigInt(c.id)), kleos.address]);
     t.expect(ups.some((u) => u > 0n) && downs.some((d) => d > 0n), "seeded votes land on indexed call ids").toBe(true);
@@ -144,6 +171,20 @@ describe.skipIf(!found)("seeded local chain", () => {
       t.expect(await read<boolean>(kleos, "bonusClaimed", [BigInt(claim.market_id), claim.trader_id]), `claim ${claim.id}`).toBe(true);
       t.expect(await read<bigint>(kleos, "bonusOf", [BigInt(claim.market_id), claim.trader_id]), `claim ${claim.id} amount`).toBe(claim.amount);
     }
-    console.log(`Pinned local reconciliation at block ${blockNumber}: ${JSON.stringify(coverage)}`);
+    const vestLogs = await client.getContractEvents({ ...kleos, eventName: "Vested", fromBlock: 0n, toBlock: blockNumber });
+    t.expect(await indexer.Vesting.getAll()).toHaveLength(vestLogs.length);
+    for (const log of vestLogs) {
+      const args = log.args as { user: Address; amount: bigint; newR: bigint };
+      t.expect(await indexer.Vesting.getOrThrow(`${log.blockNumber}_${log.logIndex}`), "vesting transition").toMatchObject({
+        trader_id: args.user.toLowerCase(), amount: args.amount, newR: args.newR,
+        blockNumber: Number(log.blockNumber), logIndex: log.logIndex, txHash: log.transactionHash,
+        contractAddress: kleos.address.toLowerCase(),
+      });
+    }
+    console.log(`Pinned local reconciliation at block ${blockNumber}: ${JSON.stringify({ ...coverage,
+      markets: markets.length, traders: traders.length, calls: calls.length,
+      courtRounds: (await indexer.CourtRound.getAll()).length,
+      bonusClaims: (await indexer.BonusClaim.getAll()).length, vestings: vestLogs.length,
+    })}`);
   }, 120_000);
 });

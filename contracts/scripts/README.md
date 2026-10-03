@@ -21,6 +21,10 @@ The Ignition module now deploys and binds the three contracts. Seeding creates s
 
 Re-run `npm run seed:local` on the same deployment. Keep any original `KLEOS_ME` value and the same demo wallet configuration. The script reads confirmed receipts again and does not mint, reseed reputation, add bets or create markets a second time. Call and market IDs come from the actual transaction events.
 
+New mints use the current on-chain KleosUSD sponsor. After a sponsor handoff, replay reconciles an existing mint's original sender and receipt before considering any new send. It does not replace historical journal entries with the new sponsor. Unknown broadcasts and changed-sender retries of reverted mints require operator reconciliation.
+
+The seed and web faucet can now use the same sponsor account, but their queues are separate. Pause the faucet and ensure exclusive sponsor ownership while seeding. The seed/court lock does not coordinate web replicas or external nonce users. A shared durable signer queue and outbox remain required for concurrent operation.
+
 Replay does not guarantee completion after arbitrary downtime. If a run stops before all planned bets are broadcast and their market closes, those remaining bets cannot be placed. The resolved example closes after 120 seconds locally or 600 seconds remotely; the room-vote example closes after 600 seconds. Reconcile the partially completed fixture and choose a fresh local demo if needed. Do not silently extend an existing close time, delete a journal or replace a remote fixture without the owner's specific approval.
 
 State lives in `.demo-state/`, which is git-ignored. The directory is restricted to its owner, and journal files have mode `0600`. Each journal is tied to chain ID, all three contract addresses, runtime code hashes and canonical contract creation receipts. The seeder also pins wallet addresses and its optional funded recipient. An unjournaled deployment with existing activity is rejected before demo wallet creation or funding. Names, current balances and guessed call numbers cannot prove which old operations succeeded.

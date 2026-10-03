@@ -9,6 +9,7 @@ import { DemoJournal, acquireJournalLock, boundedInteger, contextId, selectDemoJ
 import { demoCloseTimes } from "../scripts/demo-markets.ts";
 import { demoDeployment } from "../scripts/demo-deployment.ts";
 import { resumeDemoResolution, type DemoResolutionMarket } from "../scripts/demo-lifecycle.ts";
+import { mintDemoTokens } from "../scripts/demo-funding.ts";
 
 const HASH = `0x${"1".repeat(64)}` as const;
 const BLOCK = `0x${"2".repeat(64)}`;
@@ -156,6 +157,38 @@ describe("demo operation journal", () => {
     resolveSend(HASH);
     await first;
     await assert.rejects(journal.run("first", async () => HASH, async () => receipt(), "0xB"), /another sender/);
+  }));
+});
+
+describe("demo sponsor handoff", () => {
+  it("reconciles an owner's confirmed mint after sponsor handoff without minting again", temporaryTest(async (path) => {
+    const journal = new DemoJournal(path, context);
+    await journal.run("mint", async () => HASH, async () => receipt(), "0xOwner");
+    let sends = 0;
+    assert.equal((await mintDemoTokens(new DemoJournal(path, context), "mint", "0xSponsor", async () => { sends++; return HASH; }, async () => receipt())).transactionHash, HASH);
+    assert.equal(sends, 0);
+  }));
+  it("reconciles the original pending owner hash before minting with a new sponsor", temporaryTest(async (path) => {
+    const journal = new DemoJournal(path, context);
+    await assert.rejects(journal.run("mint", async () => HASH, async () => { throw new Error("timeout"); }, "0xOwner"));
+    let sends = 0;
+    await mintDemoTokens(new DemoJournal(path, context), "mint", "0xSponsor", async () => { sends++; return HASH; }, async () => receipt());
+    assert.equal(sends, 0);
+    await mintDemoTokens(new DemoJournal(path, context), "next-mint", "0xSponsor", async () => { sends++; return HASH; }, async () => receipt());
+    assert.equal(sends, 1);
+    assert.equal(JSON.parse(readFileSync(path, "utf8")).operations["next-mint"].sender, "0xsponsor");
+  }));
+  it("does not bypass an unknown owner broadcast by changing to the sponsor", temporaryTest(async (path) => {
+    const journal = new DemoJournal(path, context);
+    await assert.rejects(journal.run("mint", async () => { throw new Error("lost send response"); }, async () => receipt(), "0xOwner"));
+    let sends = 0;
+    await assert.rejects(mintDemoTokens(journal, "mint", "0xSponsor", async () => { sends++; return HASH; }, async () => receipt()), /unknown broadcast/);
+    assert.equal(sends, 0);
+  }));
+  it("keeps a changed sender closed even when the previous mint definitively reverted", temporaryTest(async (path) => {
+    const journal = new DemoJournal(path, context);
+    await assert.rejects(journal.run("mint", async () => HASH, async () => receipt("reverted"), "0xOwner"));
+    await assert.rejects(mintDemoTokens(journal, "mint", "0xSponsor", async () => HASH, async () => receipt()), /another sender/);
   }));
 });
 

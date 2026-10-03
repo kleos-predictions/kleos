@@ -7,6 +7,14 @@ import { tierOf } from "./tiers";
 export type Category = "Crypto" | "Sports" | "Tech" | "Culture";
 export type Status = "live" | "closing" | "closed" | "dispute" | "resolved";
 
+/** A live market's status from its on-chain state (Open, Proposed, Disputed, Resolved) and close time. */
+export function liveStatus(state: "Open" | "Proposed" | "Disputed" | "Resolved", closeMs: number, now = Date.now()): Status {
+  if (state === "Resolved") return "resolved";
+  if (state !== "Open") return "dispute";
+  if (now >= closeMs) return "closed"; // betting is over; waiting for someone to propose the outcome
+  return closeMs - now < 86_400_000 ? "closing" : "live";
+}
+
 export type PricePoint = { t: number; rep: number; money: number };
 
 export type Market = {
@@ -24,13 +32,14 @@ export type Market = {
   repYes: number;
   moneyYes: number;
   history: PricePoint[];
+  historyCoverage?: string; // indexed history may be bounded or incomplete
   proposed?: { outcome: boolean; finalIn: string };
   stage: number; // index into RESOLUTION_STAGES
   sharps: { yes: number; no: number }; // bettors with R ≥ SHARP_R, by side
-  live?: { block: string; chainId: number; contract: string; closeTime: number; state: number; sharpsAvailable: boolean; yesMoney: string; noMoney: string; yesEff: string; noEff: string };
+  live?: { block: string; chainId: number; contract: string; closeTime: number; state: number; sharpsAvailable: boolean; voided?: boolean; outcome?: boolean; creatorBond?: string; yesMoney: string; noMoney: string; yesEff: string; noEff: string };
 };
 
-export type Bet = { address: string; side: boolean; amount: number; mult: number; r?: number; effective?: number; ago: string };
+export type Bet = { address: string; side: boolean; amount: number; mult: number; r?: number; rawR?: string; effective?: number; ago: string };
 
 export type RepChange = {
   kind?: "bet" | "jury" | "admin" | "vest";

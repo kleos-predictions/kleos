@@ -35,6 +35,7 @@ function accountFromPrf(prfOutput: Uint8Array, credential: PasskeyCredentialMeta
   let node: HDKey | undefined;
   try {
     seed = mnemonicToSeedSync(entropyToMnemonic(prfOutput, wordlist));
+    prfOutput.fill(0);
     node = HDKey.fromMasterSeed(seed);
     // Wipe every owned intermediate derivation node, rather than leaving the parent keys
     // alive until garbage collection. Mera copies the terminal key into its signing session.

@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { encodeFunctionData, keccak256, toHex, type Address, type Hex, type TransactionReceipt, type WalletClient } from "viem";
+import { encodeAbiParameters, encodeFunctionData, keccak256, toHex, type Address, type Hex, type TransactionReceipt, type WalletClient } from "viem";
 import { KLEOS_ADDRESS, SOCIAL_ADDRESS, USD_ADDRESS, chain, publicClient, shortAddress } from "@/lib/chain";
 import { kleosAbi, kleosSocialAbi, kleosUsdAbi } from "@/lib/abi";
 import { describeAccountError } from "@/lib/mera";
@@ -34,6 +34,45 @@ function readParameters() {
     ]).then(([disputeWindow, courtPeriod, resolverMinR, expiryWindows]) => ({ disputeWindow, courtPeriod, resolverMinR, expiryWindows })).catch((e) => { parameters = undefined; throw e; });
   }
   return parameters;
+}
+
+/**
+ * Same as Kleos.voteCommitment: keccak256(abi.encode(id, round, juror, vote, salt)). Computed
+ * here, never with an eth_call, so the hidden vote and its salt never leave the device before
+ * the reveal.
+ */
+function voteCommitment(id: bigint, round: number, juror: Address, vote: number, salt: Hex): Hex {
+  return keccak256(
+    encodeAbiParameters(
+      [{ type: "uint256" }, { type: "uint8" }, { type: "address" }, { type: "uint8" }, { type: "bytes32" }],
+      [id, round, juror, vote, salt],
+    ),
+  );
+}
+
+/** Evidence links are shown only when they're plain https URLs. Anything else is shown as text. */
+const MAX_EVIDENCE = 300;
+function safeEvidenceUrl(uri: string): string | null {
+  if (uri.length > MAX_EVIDENCE) return null;
+  try {
+    return new URL(uri).protocol === "https:" ? uri : null;
+  } catch {
+    return null;
+  }
+}
+
+function Evidence({ uri }: { uri: string }) {
+  const href = safeEvidenceUrl(uri);
+  const text = uri.length > 80 ? `${uri.slice(0, 80)}…` : uri;
+  return href ? (
+    <a href={href} target="_blank" rel="noreferrer noopener" className="truncate text-sm underline">
+      Evidence: {text} ↗
+    </a>
+  ) : (
+    <p className="truncate text-sm text-muted" title="Not an https link, so it isn't clickable">
+      Evidence (not a link): {text}
+    </p>
+  );
 }
 
 async function readSnapshot(id: bigint, me: Address | undefined) {
@@ -117,16 +156,22 @@ export function ResolutionPanel({ marketId, oracle }: { marketId: number; oracle
   }, [id, account.address]);
 
   const invalidateRead = useCallback(() => { sequence.current++; }, []);
-  // Poll the chain: deadlines only change action availability, not contract state.
+  // Deadlines affect availability; only a fresh chain read establishes state.
+  const final = Boolean(snap && snap.market.state === STATE.Resolved && snap.bonusOpen && (snap.me.bonus === 0n || snap.me.bonusClaimed));
   useEffect(() => {
     const first = setTimeout(refresh, 0);
-    const t = setInterval(refresh, 10_000);
+    const t = final ? undefined : setInterval(() => {
+      if (!document.hidden) void refresh();
+    }, 10_000);
+    const onVisible = () => { if (!document.hidden) void refresh(); };
+    document.addEventListener("visibilitychange", onVisible);
     return () => {
       clearTimeout(first);
-      clearInterval(t);
+      if (t !== undefined) clearInterval(t);
+      document.removeEventListener("visibilitychange", onVisible);
       invalidateRead();
     };
-  }, [refresh, invalidateRead]);
+  }, [refresh, invalidateRead, final]);
 
   /** Runs one on-chain action. `fresh` asks for the passkey again (bonds and jury votes). */
   async function act(label: string, fresh: boolean, run: (client: WalletClient) => Promise<TransactionReceipt | void>, bond?: bigint) {
@@ -227,14 +272,16 @@ export function ResolutionPanel({ marketId, oracle }: { marketId: number; oracle
               <input
                 value={evidence}
                 onChange={(e) => setEvidence(e.target.value)}
-                placeholder="Link to the evidence (official result, feed, article)"
+                placeholder="https:// link to the evidence (official result, feed, article)"
+                aria-label="Evidence link"
+                maxLength={MAX_EVIDENCE}
                 className="rounded-[10px] border border-line bg-ground px-3 py-2.5 text-sm text-ink outline-none placeholder:text-muted focus:border-line-strong"
               />
               <div className="grid grid-cols-2 gap-2">
                 {[true, false].map((yes) => (
                   <span key={String(yes)} className="contents">
                     {<ActionButton label={`Propose ${outcomeText(yes)}`} onClick={() =>
-                        act(`Propose ${outcomeText(yes)}`, true, (c) => write(c, "propose", [id, yes, keccak256(toHex(evidence.trim())), evidence.trim()]), BOND)} variant={yes ? "btn-yes" : "btn-no-active"} disabled={!evidence.trim()} busy={Boolean(busy)} stale={stale} />}
+                        act(`Propose ${outcomeText(yes)}`, true, (c) => write(c, "propose", [id, yes, keccak256(toHex(evidence.trim())), evidence.trim()]), BOND)} variant={yes ? "btn-yes" : "btn-no-active"} disabled={!safeEvidenceUrl(evidence.trim())} busy={Boolean(busy)} stale={stale} />}
                   </span>
                 ))}
               </div>
@@ -262,11 +309,7 @@ export function ResolutionPanel({ marketId, oracle }: { marketId: number; oracle
             </span>
             <span className="lbl">{now < windowEnds ? `Final in ${clockText(windowEnds - now)}` : "Dispute window over"}</span>
           </div>
-          {m.evidenceURI && (
-            <a href={m.evidenceURI} target="_blank" rel="noreferrer" className="truncate text-sm underline">
-              Evidence: {m.evidenceURI} ↗
-            </a>
-          )}
+          {m.evidenceURI && <Evidence uri={m.evidenceURI} />}
           {now < windowEnds
             ? !isProposer && <ActionButton label={"Dispute · $15 bond"} onClick={() => act("Dispute · $15 bond", true, (c) => write(c, "dispute", [id]), DISPUTE_BOND)} variant={"btn-no"} busy={Boolean(busy)} stale={stale} />
             : <ActionButton label={"Finalize"} onClick={() => act("Finalize", false, (c) => write(c, "finalize", [id]))} busy={Boolean(busy)} stale={stale} />}
@@ -316,9 +359,7 @@ export function ResolutionPanel({ marketId, oracle }: { marketId: number; oracle
                     {<ActionButton label={v.label} onClick={() =>
                       act(v.label, true, async (c) => {
                         const salt = await deriveSalt(c, id, court.round);
-                        const commitment = await publicClient.readContract({
-                          address: KLEOS_ADDRESS!, abi: kleosAbi, functionName: "voteCommitment", args: [id, court.round, c.account!.address, v.value, salt],
-                        });
+                        const commitment = voteCommitment(id, court.round, c.account!.address, v.value, salt);
                         const hash = await write(c, "commitVote", [id, commitment]);
                         setNotice(`Hidden vote sent. You'll reveal it after ${clockText(Number(court.commitEnd) - now)}; nothing was saved on this device.`);
                         return hash;
@@ -337,8 +378,7 @@ export function ResolutionPanel({ marketId, oracle }: { marketId: number; oracle
                 const salt = await deriveSalt(c, id, court.round);
                 const committed = await publicClient.readContract({ address: KLEOS_ADDRESS!, abi: kleosAbi, functionName: "commitments", args: [id, court.round, c.account!.address] });
                 for (const v of VOTES) {
-                  const guess = await publicClient.readContract({ address: KLEOS_ADDRESS!, abi: kleosAbi, functionName: "voteCommitment", args: [id, court.round, c.account!.address, v.value, salt] });
-                  if (guess === committed) return write(c, "revealVote", [id, v.value, salt]);
+                  if (voteCommitment(id, court.round, c.account!.address, v.value, salt) === committed) return write(c, "revealVote", [id, v.value, salt]);
                 }
                 throw new Error("This passkey didn't cast the hidden vote for this round.");
               })} busy={Boolean(busy)} stale={stale} />}
@@ -354,11 +394,7 @@ export function ResolutionPanel({ marketId, oracle }: { marketId: number; oracle
           <span className="font-dot text-[28px] leading-none font-black">
             {m.voided ? "AMBIGUOUS · REFUNDED" : <>RESOLVED <span className={m.outcome ? "text-accent" : "text-lavender"}>{outcomeText(m.outcome)}</span></>}
           </span>
-          {m.evidenceURI && (
-            <a href={m.evidenceURI} target="_blank" rel="noreferrer" className="truncate text-sm underline">
-              Evidence: {m.evidenceURI} ↗
-            </a>
-          )}
+          {m.evidenceURI && <Evidence uri={m.evidenceURI} />}
           <div className="flex flex-wrap gap-2">
             {!snap.bonusOpen &&
               <ActionButton label={"Settle everyone"} onClick={() =>
@@ -382,7 +418,7 @@ export function ResolutionPanel({ marketId, oracle }: { marketId: number; oracle
         </div>
       )}
 
-      {notice && <p className="rounded-[12px] border border-line-strong px-4 py-3 text-sm">{notice}</p>}
+      {notice && <p role="status" aria-live="polite" className="rounded-[12px] border border-line-strong px-4 py-3 text-sm">{notice}</p>}
       {error && (
         <p role="alert" className="rounded-[12px] border border-accent px-4 py-3 text-sm">
           {error}

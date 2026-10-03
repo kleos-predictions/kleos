@@ -1,6 +1,7 @@
 import { MARKETS } from "@/lib/data";
 import { IS_LIVE } from "@/lib/chain";
 import { readExtraMarkets } from "@/lib/onchain";
+import * as indexer from "@/lib/indexer";
 import { MarketGrid } from "@/components/market-grid";
 
 export default async function MarketsPage(props: PageProps<"/markets">) {
@@ -8,7 +9,7 @@ export default async function MarketsPage(props: PageProps<"/markets">) {
   let markets = MARKETS;
   let unavailable = false;
   if (IS_LIVE) {
-    try { markets = await readExtraMarkets(1); }
+    try { markets = await indexer.preferIndexer(indexer.readMarkets, () => readExtraMarkets(1)); }
     catch { markets = []; unavailable = true; }
   }
   return (
@@ -19,7 +20,7 @@ export default async function MarketsPage(props: PageProps<"/markets">) {
           <span className="cursor-blink text-accent">_</span>
         </h1>
         <div className="lbl flex items-center gap-2 pb-2">
-          {IS_LIVE ? unavailable ? "Chain data unavailable" : "Latest chain snapshot · test tokens" : "Sample markets · demo mode"}
+          {IS_LIVE ? unavailable ? "Chain data unavailable" : "Verified chain snapshot · test tokens" : "Sample markets · demo mode"}
         </div>
       </div>
       {unavailable ? <p role="alert" className="card p-6 text-muted">Markets could not be read. Reload to try again.</p> : <MarketGrid markets={markets} query={typeof q === "string" ? q : ""} />}

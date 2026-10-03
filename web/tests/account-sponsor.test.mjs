@@ -284,9 +284,10 @@ test("owned-node cleanup preserves the established recovery derivation and wipes
   await assert.rejects(rebuilt.session.signDigest(new Uint8Array(32)), /ended/i);
 });
 
-function sponsorHarness({ failSend = false, failConfirmation = false, failUsdConfirmation = false, uncertainUsdConfirmation = false } = {}) {
+function sponsorHarness({ failSend = false, failConfirmation = false, failUsdConfirmation = false, uncertainUsdConfirmation = false, budgets = {}, gasBalance = 0n, usdBalance = 0n } = {}) {
   let sends = 0;
-  const timestamp = Date.now();
+  let timestamp = Date.now();
+  class ClockDate extends Date { static now() { return timestamp; } }
   const confirmations = [];
   const { POST } = load("app/api/sponsor/route.ts", {
     viem: { ...viem, verifyMessage: async () => true, createWalletClient: () => ({
@@ -295,7 +296,7 @@ function sponsorHarness({ failSend = false, failConfirmation = false, failUsdCon
       writeContract: async () => { sends++; return "0x" + "22".repeat(32); },
     }) },
     "viem/accounts": { privateKeyToAccount: () => ({ address: ADDRESS_B }) },
-    "@/lib/chain": { chain: { id: 10143 }, USD_ADDRESS: ADDRESS_B, publicClient: { getBalance: async () => 0n, readContract: async () => 0n } },
+    "@/lib/chain": { chain: { id: 10143 }, USD_ADDRESS: ADDRESS_B, publicClient: { getBalance: async () => gasBalance, readContract: async () => usdBalance } },
     "@/lib/abi": { kleosUsdAbi: [{ type: "function", name: "sponsorMint", stateMutability: "nonpayable", inputs: [{ name: "to", type: "address" }, { name: "amount", type: "uint256" }], outputs: [] }] },
     "@/lib/sponsor-proof": proof,
     "@/lib/sponsor-coordinator": { SponsorCoordinator },
@@ -305,16 +306,28 @@ function sponsorHarness({ failSend = false, failConfirmation = false, failUsdCon
       if (uncertainUsdConfirmation && intent.data !== "0x") throw new transactions.TransactionUncertainError(hash, intent);
       return { status: "success", transactionHash: hash };
     } },
-  }, { Request, Response, URL, Date, TextDecoder, process: { env: { SPONSOR_PRIVATE_KEY: "synthetic-stub-not-a-key" } } });
+  }, { Request, Response, URL, Date: ClockDate, TextDecoder, process: { env: { SPONSOR_PRIVATE_KEY: "synthetic-stub-not-a-key", ...budgets } } });
   const body = { address: ADDRESS_A, issuedAt: timestamp, requestId: randomUUID(), signature: "0x" + "11".repeat(65) };
-  const request = (payload = body) => new Request("https://kleos.example/api/sponsor", { method: "POST", headers: { "content-type": "application/json", origin: "https://kleos.example" }, body: JSON.stringify(payload) });
-  return { POST, request, body, confirmations, get sends() { return sends; } };
+  const request = (payload = body, headers = {}) => new Request("https://kleos.example/api/sponsor", { method: "POST", headers: { "content-type": "application/json", origin: "https://kleos.example", ...headers }, body: JSON.stringify(payload) });
+  const next = (number, headers = {}) => request({ ...body, address: `0x${number.toString(16).padStart(40, "0")}`, requestId: randomUUID(), issuedAt: timestamp }, headers);
+  return { POST, request, next, body, confirmations, advance: (ms) => { timestamp += ms; }, get sends() { return sends; } };
 }
 
-test("sponsor reserves failed attempts and zero-USD addresses cannot bypass cooldown", async () => {
+test("a hashless sponsor broadcast locks every recipient until operator reconciliation", async () => {
   const harness = sponsorHarness({ failSend: true });
   const failed = await harness.POST(harness.request());
   assert.equal(failed.status, 503);
+  for (const request of [harness.request({ ...harness.body, requestId: randomUUID() }), harness.next(3)]) {
+    const next = await harness.POST(request);
+    assert.equal(next.status, 503);
+    assert.match((await next.json()).error, /operator must reconcile/i);
+  }
+  assert.equal(harness.sends, 1);
+});
+
+test("a definitively reverted transfer still reserves cooldown for a zero-USD account", async () => {
+  const harness = sponsorHarness({ failConfirmation: true });
+  assert.equal((await harness.POST(harness.request())).status, 503);
   const next = await harness.POST(harness.request({ ...harness.body, requestId: randomUUID() }));
   assert.equal((await next.json()).cooldown, true);
   assert.equal(harness.sends, 1);
@@ -329,7 +342,7 @@ test("successful sponsor requests replay idempotently and confirm both intended 
   assert.deepEqual(await again.json(), initial);
   assert.equal(harness.sends, 2);
   assert.equal(harness.confirmations[0].to, ADDRESS_A);
-  assert.equal(harness.confirmations[0].value, viem.parseEther("0.1"));
+  assert.equal(harness.confirmations[0].value, viem.parseEther("0.3"));
   assert.equal(harness.confirmations[1].to, ADDRESS_B);
   assert.notEqual(harness.confirmations[1].data, "0x");
 });
@@ -366,6 +379,10 @@ test("an uncertain mint retains its public hash and blocks a new transfer until 
   assert.equal(again.status, 503);
   assert.deepEqual((await again.json()).pending, partial.pending);
   assert.equal(harness.sends, 2, "a new proof checks the pending mint without issuing another one");
+  const otherRecipient = await harness.POST(harness.next(3));
+  assert.equal(otherRecipient.status, 503);
+  assert.deepEqual((await otherRecipient.json()).pending, partial.pending);
+  assert.equal(harness.sends, 2, "another recipient cannot bypass an unresolved sponsor nonce");
 });
 
 test("an oversized funding body is rejected even without a content-length header", async () => {
@@ -373,4 +390,59 @@ test("an oversized funding body is rejected even without a content-length header
   const response = await harness.POST(harness.request({ ...harness.body, ignored: "x".repeat(5000) }));
   assert.equal(response.status, 413);
   assert.equal(harness.sends, 0);
+});
+
+test("sponsor budgets count failed attempts, fresh wallets cannot bypass the daily ceiling", async () => {
+  const harness = sponsorHarness({ failConfirmation: true, budgets: { SPONSOR_PER_DAY: "1" } });
+  assert.equal((await harness.POST(harness.next(3))).status, 503);
+  const blocked = await harness.POST(harness.next(4));
+  assert.equal(blocked.status, 429);
+  assert.match((await blocked.json()).error, /budget is used up/);
+  assert.equal(harness.sends, 1);
+  harness.advance(24 * 60 * 60_000);
+  assert.equal((await harness.POST(harness.next(4))).status, 503, "expired daily attempts release the next reservation");
+  assert.equal(harness.sends, 2);
+});
+
+test("per-IP and per-minute limits are checked inside the shared signer queue", async () => {
+  const ip = sponsorHarness({ budgets: { SPONSOR_PER_IP_PER_HOUR: "1", SPONSOR_PER_MINUTE: "100" } });
+  assert.equal((await ip.POST(ip.next(3, { "x-forwarded-for": "192.0.2.1" }))).status, 200);
+  assert.equal((await ip.POST(ip.next(4, { "x-forwarded-for": "192.0.2.1" }))).status, 429);
+  assert.equal((await ip.POST(ip.next(4, { "x-forwarded-for": "192.0.2.2" }))).status, 200);
+  const minute = sponsorHarness({ budgets: { SPONSOR_PER_IP_PER_HOUR: "100", SPONSOR_PER_MINUTE: "1" } });
+  const [first, second] = await Promise.all([minute.POST(minute.next(3)), minute.POST(minute.next(4))]);
+  assert.equal(first.status, 200);
+  assert.equal(second.status, 429);
+  assert.equal(minute.sends, 2, "only one gas-plus-USD attempt was sent");
+  minute.advance(60_000);
+  assert.equal((await minute.POST(minute.next(4))).status, 200);
+});
+
+test("invalid budgets fail closed and a zero quota disables funding", async () => {
+  for (const value of ["NaN", "-1", "1.5", "Infinity", "9007199254740992"]) {
+    const harness = sponsorHarness({ budgets: { SPONSOR_PER_DAY: value } });
+    assert.equal((await harness.POST(harness.request())).status, 503);
+    assert.equal(harness.sends, 0);
+  }
+  const disabled = sponsorHarness({ budgets: { SPONSOR_PER_DAY: "0" } });
+  assert.equal((await disabled.POST(disabled.request())).status, 429);
+  assert.equal(disabled.sends, 0);
+});
+
+test("funding requires the exact browser origin even with a signed account proof", async () => {
+  const harness = sponsorHarness();
+  for (const origin of ["", "https://elsewhere.example", "http://kleos.example"]) {
+    assert.equal((await harness.POST(harness.request(harness.body, { origin }))).status, 403);
+  }
+  assert.equal(harness.sends, 0);
+});
+
+test("the merged gas floor tops up low gas and leaves funded accounts unchanged", async () => {
+  const low = sponsorHarness({ gasBalance: viem.parseEther("0.05"), usdBalance: viem.parseUnits("100", 6) });
+  assert.equal((await low.POST(low.request())).status, 200);
+  assert.equal(low.sends, 1);
+  assert.equal(low.confirmations[0].value, viem.parseEther("0.3"));
+  const funded = sponsorHarness({ gasBalance: viem.parseEther("0.06"), usdBalance: viem.parseUnits("50", 6), budgets: { SPONSOR_PER_DAY: "0" } });
+  assert.deepEqual((await (await funded.POST(funded.request())).json()).funded, { gas: false, usd: false });
+  assert.equal(funded.sends, 0, "a balance check does not consume a funding reservation");
 });

@@ -12,7 +12,7 @@ export function StatusTag({ status }: { status: Status }) {
     case "closing":
       return <span className="lbl rounded-full border border-accent px-2 py-0.5 !text-ink">Closing soon</span>;
     case "closed":
-      return <span className="lbl rounded-full border border-line-strong px-2 py-0.5">Closed · awaiting proposal</span>;
+      return <span className="lbl rounded-full border border-line-strong px-2 py-0.5 !text-ink">Closed · awaiting proposal</span>;
     case "dispute":
       return <span className="lbl rounded-full border border-line-strong px-2 py-0.5">Dispute window</span>;
     case "resolved":
