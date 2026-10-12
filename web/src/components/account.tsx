@@ -1,10 +1,11 @@
 "use client";
 
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
-import { createWalletClient, http, type WalletClient } from "viem";
+import { createWalletClient, http, type Address, type WalletClient } from "viem";
 import { toViemAccount } from "@category-labs/mera/viem";
 import type { PasskeyCredentialMetadata } from "@category-labs/mera";
-import { chain, POLLING_MS } from "@/lib/chain";
+import { chain, POLLING_MS, publicClient, USD_ADDRESS } from "@/lib/chain";
+import { kleosUsdAbi } from "@/lib/abi";
 import { createAccount, describeAccountError, unlockAccount, type UnlockedAccount } from "@/lib/mera";
 
 // Session design:
@@ -32,8 +33,8 @@ type AccountContext = {
    * `signIn` uses an existing passkey on a device with nothing cached (the stateless path).
    */
   authorize: (opts?: { fresh?: boolean; signIn?: boolean }) => Promise<WalletClient | null>;
-  /** Waits until a new account has gas and test money. */
-  whenFunded: () => Promise<void>;
+  /** Ensures this signer has gas and the action's kUSD amount; sponsorship is optional. */
+  whenFunded: (address: Address, usd?: bigint) => Promise<void>;
   requestFunds: () => Promise<void>;
   lock: () => void;
   signOut: () => void;
@@ -87,6 +88,8 @@ export function AccountProvider({ children }: { children: React.ReactNode }) {
   const live = useRef<UnlockedAccount | null>(null);
   const idle = useRef<ReturnType<typeof setTimeout> | null>(null);
   const fundingPromise = useRef<Promise<void>>(Promise.resolve());
+  const fundingFailed = useRef(false);
+  const fundingPending = useRef(false);
 
   const lock = useCallback(() => {
     live.current?.session.end();
@@ -102,15 +105,38 @@ export function AccountProvider({ children }: { children: React.ReactNode }) {
 
   useEffect(() => () => live.current?.session.end(), []);
 
-  const requestFunds = useCallback(async (address?: string) => {
+  const requestFunds = useCallback((address?: string) => {
     const target = address ?? live.current?.address ?? cached?.address;
-    if (!target) return;
+    if (!target) return Promise.resolve();
     setFunding(true);
+    setError(null);
+    fundingFailed.current = false;
+    fundingPending.current = true;
     const run = fetch("/api/sponsor", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ address: target }) })
-      .then(() => undefined)
-      .catch(() => undefined)
-      .finally(() => setFunding(false));
+      .then(async (response) => {
+        const result = await response.json().catch(() => null) as { error?: string; cooldown?: boolean; funded?: { gas?: boolean; usd?: boolean } } | null;
+        if (!response.ok || result?.error) throw new Error(result?.error ?? "Test funding is unavailable. Try again in a moment.");
+        if (result?.cooldown) throw new Error("Test funding is on cooldown. Try again in 30 seconds.");
+        if (typeof result?.funded?.gas !== "boolean" || typeof result?.funded?.usd !== "boolean") {
+          throw new Error("The funding response could not be verified. Try again in a moment.");
+        }
+      })
+      .catch((failure: unknown) => {
+        if (fundingPromise.current === run) {
+          fundingFailed.current = true;
+          setError(describeAccountError(failure));
+        }
+        throw failure;
+      })
+      .finally(() => {
+        if (fundingPromise.current === run) {
+          fundingPending.current = false;
+          setFunding(false);
+        }
+      });
     fundingPromise.current = run;
+    // Keep the rejection for whenFunded/requestFunds, but also handle background callers.
+    void run.catch(() => undefined);
     return run;
   }, [cached?.address]);
 
@@ -132,23 +158,26 @@ export function AccountProvider({ children }: { children: React.ReactNode }) {
       try {
         if (live.current && !fresh) {
           touch();
+          // A new click can retry failed funding; never leave the primary action waiting on
+          // the same rejected promise forever. An in-flight request is left alone.
+          if (fundingFailed.current) void requestFunds(live.current.address).catch(() => undefined);
           return createWalletClient({ account: toViemAccount(live.current.session), chain, transport: http(), pollingInterval: POLLING_MS });
         }
         if (!cached && signIn) {
           const unlocked = await unlockAccount();
           const client = adopt(unlocked);
-          void requestFunds(unlocked.address);
+          void requestFunds(unlocked.address).catch(() => undefined);
           return client;
         }
         if (!cached) {
           const account = await createAccount();
           const client = adopt(account);
-          void requestFunds(account.address); // runs while the user reads the next screen
+          void requestFunds(account.address).catch(() => undefined); // runs while the user reads the next screen
           return client;
         }
         const unlocked = await unlockAccount(cached.credential);
         const client = adopt(unlocked);
-        void requestFunds(unlocked.address); // tops up only if the balance ran low
+        void requestFunds(unlocked.address).catch(() => undefined); // tops up only if the balance ran low
         return client;
       } catch (e) {
         setError(describeAccountError(e));
@@ -163,7 +192,44 @@ export function AccountProvider({ children }: { children: React.ReactNode }) {
     writeCache(null);
   }, [lock]);
 
-  const whenFunded = useCallback(() => fundingPromise.current, []);
+  const whenFunded = useCallback(async (address: Address, usd = 0n) => {
+    const assertCurrent = () => {
+      if (live.current?.address.toLowerCase() !== address.toLowerCase()) {
+        throw new Error("Your account changed or locked. Unlock it before continuing.");
+      }
+    };
+    assertCurrent();
+    const readFunds = async () => {
+      if (usd > 0n && !USD_ADDRESS) throw new Error("Test USD is not configured.");
+      const [gas, tokens] = await Promise.all([
+        publicClient.getBalance({ address }),
+        usd > 0n
+          ? publicClient.readContract({ address: USD_ADDRESS!, abi: kleosUsdAbi, functionName: "balanceOf", args: [address] })
+          : Promise.resolve(0n),
+      ]);
+      assertCurrent();
+      return { gas, tokens };
+    };
+    // The faucet's grant thresholds are not transaction requirements. The wallet estimates
+    // the actual gas cost; token-free actions need no kUSD and small bets need only their stake.
+    const sufficient = (funds: { gas: bigint; tokens: bigint }) => funds.gas > 0n && funds.tokens >= usd;
+    if (sufficient(await readFunds())) return;
+
+    let fundingError: unknown;
+    try {
+      // Reuse the current attempt, including its failure. A later user click retries via
+      // authorize(); an account that ran low after a successful grant gets one new attempt.
+      await (fundingPending.current || fundingFailed.current ? fundingPromise.current : requestFunds(address));
+    } catch (failure) {
+      fundingError = failure;
+    }
+    const funds = await readFunds();
+    if (sufficient(funds)) return; // A partial grant or manual deposit may be enough for this action.
+    if (fundingError) throw fundingError;
+    throw new Error(funds.gas === 0n
+      ? "Your account has no gas money. Request test funds or fund it with MON."
+      : "Not enough test USD for this action. Try a smaller amount or request funds.");
+  }, [requestFunds]);
 
   const value: AccountContext = {
     status,

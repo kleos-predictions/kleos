@@ -3,8 +3,8 @@
 import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { encodeAbiParameters, keccak256, toHex, zeroAddress, type Address, type Hex, type WalletClient } from "viem";
-import { KLEOS_ADDRESS, SOCIAL_ADDRESS, USD_ADDRESS, chain, publicClient, shortAddress } from "@/lib/chain";
-import { kleosAbi, kleosSocialAbi, kleosUsdAbi } from "@/lib/abi";
+import { KLEOS_ADDRESS, SOCIAL_ADDRESS, chain, publicClient, shortAddress } from "@/lib/chain";
+import { kleosAbi, kleosSocialAbi } from "@/lib/abi";
 import { describeAccountError } from "@/lib/mera";
 import { RESOLUTION_STAGES } from "@/lib/data";
 import { useKleosAccount } from "./account";
@@ -176,20 +176,22 @@ export function ResolutionPanel({ marketId, oracle }: { marketId: number; oracle
   }, [refresh, final]);
 
   /** Runs one on-chain action. `fresh` asks for the passkey again (bonds and jury votes). */
-  async function act(label: string, fresh: boolean, run: (client: WalletClient) => Promise<Hex | void>, bond?: bigint) {
+  async function act(label: string, fresh: boolean, run: (client: WalletClient) => Promise<Hex | void>, bond?: bigint, confirmation?: string) {
     setError(null);
     setNotice(null);
     const client = await account.authorize({ fresh }); // first await: may show the passkey prompt
     if (!client?.account) return;
     setBusy(label);
     try {
-      await account.whenFunded();
-      if (bond) {
-        const balance = await publicClient.readContract({ address: USD_ADDRESS!, abi: kleosUsdAbi, functionName: "balanceOf", args: [client.account.address] });
-        if (balance < bond) await account.requestFunds();
-      }
+      await account.whenFunded(client.account.address, bond);
       const hash = await run(client);
-      if (hash) await publicClient.waitForTransactionReceipt({ hash });
+      if (hash) {
+        const receipt = await publicClient.waitForTransactionReceipt({ hash });
+        if (receipt.status !== "success") {
+          throw new Error("The transaction reverted. The action was not completed.");
+        }
+      }
+      if (confirmation) setNotice(confirmation);
       await refresh();
       router.refresh();
     } catch (e) {
@@ -347,10 +349,8 @@ export function ResolutionPanel({ marketId, oracle }: { marketId: number; oracle
                       act(v.label, true, async (c) => {
                         const salt = await deriveSalt(c, id, court.round);
                         const commitment = voteCommitment(id, court.round, c.account!.address, v.value, salt);
-                        const hash = await write(c, "commitVote", [id, commitment]);
-                        setNotice(`Hidden vote sent. You'll reveal it after ${clockText(Number(court.commitEnd) - now)}; nothing was saved on this device.`);
-                        return hash;
-                      }),
+                        return write(c, "commitVote", [id, commitment]);
+                      }, undefined, "Hidden vote confirmed. Reveal it when the reveal window opens; nothing was saved on this device."),
                       iAmJuror.committed ? "btn-no" : v.value === 1 ? "btn-yes" : v.value === 2 ? "btn-no-active" : "btn-no",
                     )}
                   </span>
@@ -393,7 +393,10 @@ export function ResolutionPanel({ marketId, oracle }: { marketId: number; oracle
                   const bettors = await publicClient.readContract({ address: KLEOS_ADDRESS!, abi: kleosAbi, functionName: "getBettors", args: [id] });
                   for (let i = 0; i < bettors.length; i += 100) {
                     const hash = await write(c, "settle", [id, bettors.slice(i, i + 100)]);
-                    await publicClient.waitForTransactionReceipt({ hash });
+                    const receipt = await publicClient.waitForTransactionReceipt({ hash });
+                    if (receipt.status !== "success") {
+                      throw new Error("A settlement batch reverted. Already confirmed batches remain settled; this batch was not applied.");
+                    }
                   }
                 }),
               )}

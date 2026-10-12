@@ -42,7 +42,7 @@ export function FollowButton({ who, name }: { who: Address; name?: string }) {
     setBusy(true);
     setError(null);
     try {
-      await account.whenFunded();
+      await account.whenFunded(client.account.address);
       const hash = await client.writeContract({
         account: client.account,
         chain,

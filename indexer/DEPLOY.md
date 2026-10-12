@@ -19,7 +19,26 @@ Facts below were checked on 2026-10-01 against Envio's docs, the pricing page an
 | Indexer | `kleos`: repo `kleos-predictions/kleos`, branch `main`, root directory `indexer`, config file `config.testnet.yaml`, auto-deploy **off** |
 | GitHub app | Envio Deployments, installed on the `kleos-predictions` org |
 | Data source | HyperSync. Hosted indexers get their own HyperSync access, so Envio Cloud needs no token or env vars |
-| Deployments | `cebb79d`, deployed 2026-10-01, deleted automatically around Oct 31. GraphQL: `https://indexer.dev.hyperindex.xyz/25439e6/v1/graphql`. Synced through HyperSync with no token; matches the contracts |
+| Live deployment | `83e7909`, deployed 2026-10-11 at 17:58 PDT with the user's authorization. **Active, 100% synced through HyperSync**, 158 events, 1/3 deployment slots used. GraphQL: `https://indexer.dev.hyperindex.xyz/27dbf62/v1/graphql`. Hosted data verified against the contracts |
+| Previous deployment | `cebb79d` was deleted for **Inactive Deployment**. On Oct 11, the dashboard showed deletion **2d ago**. Its old URL `https://indexer.dev.hyperindex.xyz/25439e6/v1/graphql` returns HTTP 404 |
+
+**2026-10-11 audit:** latest `main` is `83e7909`; GitHub reports a successful Vercel
+Production deployment in Daniela's project. Her saved environment variables were
+not accessible to the auditing account. See [`web/DEPLOY.md`](../web/DEPLOY.md) for
+the exact configuration and Envio recovery checklist. The existing Envio indexer
+project and testnet config were verified in the signed-in dashboard and reused for
+the new deployment. Auto-deploy remains off. Daniela still needs to set the new
+`INDEXER_URL` in Vercel and redeploy the site.
+
+Pre-deploy checks passed: codegen, TypeScript, 25 simulated tests, and the live
+testnet comparison. The local-chain test skipped because no local stack was
+running. After deployment, one hosted GraphQL query and read-only contract calls
+verified all 8 markets, 20 traders, 14 calls and the 8-person juror pool, including
+market pools/prices/bettor counts, trader reputation/social counts, names and call
+votes. Protocol totals are 33 bets and 11 distinct bettors; 7 follows and 36 call
+votes were returned. No wallet action or contract deployment was needed.
+Runtime logs since deployment contained no warnings or errors; HyperSync continued
+to advance at the chain head.
 
 ## Free plan rules that shape how we work
 
@@ -27,8 +46,8 @@ Facts below were checked on 2026-10-01 against Envio's docs, the pricing page an
 |---|---|
 | **3 deployments per indexer at once.** Deleting one frees its slot. | Keep at most two: the one the site uses and the one being checked. Delete the rest. |
 | **Each deployment has its own GraphQL URL.** A static production URL is a paid feature. | The web app reads one server-only env var, `INDEXER_URL`. Switching deployments means changing it and redeploying the site. Nothing is rebuilt into the client. |
-| **Deployments are deleted 30 days after creation.** | A deployment made today dies on Oct 31, before judging ends. Make the final one on Oct 12 or 13, so it lives until about Nov 12. |
-| **Soft limits: 100k events, 5 GB, or 7 days without requests.** After one, 7 days normal, 3 days read-only, then deletion. | Testnet has about 250 events. The live site queries the indexer, which counts as requests. Check once a week during judging. |
+| **Deployments are deleted 30 days after creation.** | The Oct 11 replacement expires around Nov 10, covering the judging window if it remains active. A later code change needs a new tested deployment and URL. |
+| **Soft limits: 100k events, 5 GB, or 7 days without requests.** Published grace periods are subject to change. | The Oct 11 dashboard showed the Oct 1 deployment deleted about two days earlier for inactivity, so do not rely on the published grace period. The live site queries the indexer, which counts as requests; verify ongoing use and deployment health during judging. |
 | **100 queries a minute**, across all visitors. | All queries run on the web server, one per page render, with short caching. Never one query per component, never from the browser. |
 | **Every deployment indexes from the start block.** | Cheap here: the full testnet range takes under a second through HyperSync. A new deployment is ready in minutes, mostly build time. |
 | Env vars | Not needed. Envio's pricing lists env-var management only for paid plans, so we don't depend on them. |
@@ -93,7 +112,8 @@ Pages read indexer → RPC → sample data, so nothing breaks while `INDEXER_URL
 |---|---|
 | Oct 1 (done) | First deployment, `cebb79d`, for building `web/src/lib/indexer.ts` (#3) against real data |
 | As needed | One per indexer change worth showing. Delete the previous one |
-| Oct 12–13 | The final one, after the last indexer change. It is the one judges see, and it lives until about Nov 12 |
+| Oct 11 (done) | Replacement deployment `83e7909`; active and verified, expires around Nov 10 unless removed earlier for inactivity or other limits. Set its URL in Vercel |
+| Before submission | Redeploy only if another indexer change is needed; verify the live frontend consumes the chosen endpoint |
 | Weekly until Nov 4 | `deployment status`, and a page load on the live site |
 
 ## If the contracts are redeployed

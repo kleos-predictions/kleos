@@ -36,7 +36,7 @@ export function NameEditor({ current }: { current?: string }) {
     setBusy(true);
     setError(null);
     try {
-      await account.whenFunded();
+      await account.whenFunded(client.account.address);
       const hash = await client.writeContract({ account: client.account, chain, address: SOCIAL_ADDRESS!, abi: kleosSocialAbi, functionName: "setName", args: [name] });
       await publicClient.waitForTransactionReceipt({ hash });
       setOpen(false);

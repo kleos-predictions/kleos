@@ -4,8 +4,8 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { useReadContract } from "wagmi";
 import { parseUnits } from "viem";
-import { IS_LIVE, KLEOS_ADDRESS, USD_ADDRESS, chain, publicClient } from "@/lib/chain";
-import { kleosAbi, kleosUsdAbi } from "@/lib/abi";
+import { IS_LIVE, KLEOS_ADDRESS, chain, publicClient } from "@/lib/chain";
+import { kleosAbi } from "@/lib/abi";
 import { describeAccountError } from "@/lib/mera";
 import { CATEGORIES } from "@/lib/data";
 import { useKleosAccount } from "./account";
@@ -47,11 +47,8 @@ export function CreateMarketForm() {
     if (!client?.account) return;
     setBusy(true);
     try {
-      await account.whenFunded();
-      if (!isTeam) {
-        const balance = await publicClient.readContract({ address: USD_ADDRESS!, abi: kleosUsdAbi, functionName: "balanceOf", args: [client.account.address] });
-        if (balance < COST) await account.requestFunds();
-      }
+      const isTeamSigner = owner?.toLowerCase() === client.account.address.toLowerCase();
+      await account.whenFunded(client.account.address, isTeamSigner ? 0n : COST);
       const hash = await client.writeContract({
         account: client.account,
         chain,

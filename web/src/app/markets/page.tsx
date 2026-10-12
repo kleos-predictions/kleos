@@ -19,7 +19,7 @@ export default async function MarketsPage(props: PageProps<"/markets">) {
         </h1>
         <div className="lbl flex items-center gap-2 pb-2">
           <span className="size-2 rounded-full bg-accent" />
-          Monad testnet · all systems operational
+          {IS_LIVE ? "Monad testnet" : "Demo mode · sample data"}
         </div>
       </div>
       <MarketGrid markets={markets} query={typeof q === "string" ? q : ""} />

@@ -2,7 +2,28 @@
 
 Plan: `PLAN.md`. Diagrams: `ARCHITECTURE.md`. Deploy runbook: `DEPLOY.md` (update them when handlers change). Update this file at the end of every step, before committing.
 
-**Branch:** `main` · **Last updated:** 2026-10-01
+**Branch:** `codex/demo-readiness` · **Last updated:** 2026-10-12
+
+## Deployment readiness (2026-10-11 follow-up)
+
+- Updated the demo-readiness branch to `main` at `74de1d4`; indexer handlers and the deployed contracts are unchanged.
+- Daniela reports Production variables saved and a redeploy attempted. GitHub's latest Vercel check failed because Hobby cannot deploy a private organization repository. The production URL still serves sample market data; live frontend/indexer integration remains unverified.
+- The user chose to keep the repository private. Daniela will address the Vercel plan restriction before the next production verification.
+- Read-only testnet inventory at block `70267400`: eight markets; 1, 2, 4 and 6 remain open for bets, 3, 5 and 8 are closed awaiting a proposal, and 7 is resolved. No market is currently disputed. The sponsor still holds 2 MON.
+- New passkey funding, bets, court preparation and settlement have not been executed in this readiness work. The existing Envio endpoint remains the one verified below.
+- Demo-readiness checks (updated Oct 12): 32 web regression tests, web lint, and the Webpack production build/type-check pass. Funded accounts can perform actions independently of sponsorship; balance checks use each action's stake or bond, with no kUSD required for token-free actions. All 67 contract/operator tests previously passed, including 19 mocked court-bot scope/commitment/receipt checks; contract code is unchanged since those checks. Turbopack failed to bind a worker port in this local environment; the default build remains to be verified on Vercel. No indexer handler or schema changes were made.
+
+## Deployment audit (2026-10-11)
+
+- Fetched `origin/main`; this worktree already matched `83e7909`. GitHub reports a successful Production deployment in Daniela's Vercel project.
+- Old Envio endpoint `https://indexer.dev.hyperindex.xyz/25439e6/v1/graphql` returned HTTP 404 to a `Protocol` query. After the user signed in through the in-app browser, the dashboard confirmed `cebb79d` was deleted **2d ago**, reason **Inactive Deployment**, with **0/3** active deployments.
+- Verified the existing `kleos-predictions/kleos` Envio project: root `indexer`, config `config.testnet.yaml`, release branch `main`, auto-deploy off. Latest `83e7909` is listed with a Deploy action. Reuse this project: run the pre-deploy checks, deploy with owner authorization, and update Vercel's `INDEXER_URL` before redeploying the web app.
+- Added `web/DEPLOY.md` with the verified public testnet values, sponsor address, required/optional variables and recovery steps. Vercel settings returned 403, so saved/missing variable status remains unverified. Restored the deploy-block entry and documented optional history overrides in `web/.env.example`.
+- Read-only contract checks: 8 markets; `KleosUSD.market()` matches the configured Kleos; sponsor `0x0A1Dd0504C9071B5aebF3e9940B75Db92e2A92e9` has 2 MON. No contract deployment, transaction or private-key use performed.
+- Existing local `ENVIO_API_TOKEN` verified with a read-only HyperSync query (HTTP 200). The token is usable independently of the unavailable Cloud deployment; its value was not printed or copied into docs.
+- User authorized a replacement deployment. Pre-deploy checks for `83e7909`: frozen-lockfile install, codegen and TypeScript passed; 25 simulated tests passed, local-chain test skipped because no local stack was running. Compiled the three contracts to supply test ABIs, then the read-only testnet check passed: blocks 67114786–70260217 indexed in 0.684 s; 8 markets, 20 traders, 14 calls, 8 jurors, 7 follows and 36 call votes matched the contracts.
+- Deployed `83e7909` through Envio at 17:58 PDT on Oct 11: Active, 100% synced via HyperSync, 158 events. New endpoint: `https://indexer.dev.hyperindex.xyz/27dbf62/v1/graphql`. Independently verified the hosted GraphQL data against all markets, trader reputation/social counts/names, jurors and call tallies on-chain. Protocol totals: 8 markets, 33 bets, 11 bettors, 14 calls, 8 jurors. Daniela's remaining step is to set this server-only `INDEXER_URL` in Vercel and redeploy; our account cannot access her project settings.
+- Runtime log check since deployment: no warnings or errors. Trace logs show continued HyperSync polling and progress at the chain head.
 
 ## Resume here
 
@@ -79,8 +100,9 @@ Daniela's `seed-demo.ts` on `main` (commit `3a8d383`) now resolves and settles a
 - [x] Start block moved to 67114786, KleosSocial's deploy block (Kleos followed at 67114811)
 - [x] `DEPLOY.md` rewritten around the free plan's checked limits: 3 deployments at once, a URL per deployment, 30-day lifetime, and the deploy schedule that keeps one alive through judging
 - [x] First Cloud deployment (2026-10-01): `cebb79d`, endpoint `https://indexer.dev.hyperindex.xyz/25439e6/v1/graphql`. Built and synced in about a minute, `is_hyper_sync: true` with no token, no warnings or errors in the logs. Every market, trader, call and the juror pool match the contracts. Deleted automatically around Oct 31
-- [ ] `INDEXER_URL` for #3 (set it to the endpoint above)
-- [ ] Final deployment on Oct 12–13; README data flow; close #1 and #2
+- [x] Replacement deployment on Oct 11: `83e7909`, active and verified at `https://indexer.dev.hyperindex.xyz/27dbf62/v1/graphql`
+- [ ] Daniela: set the new `INDEXER_URL` in Vercel Production, redeploy, verify the live frontend
+- [ ] Before submission: verify final frontend/indexer pairing, finish remaining #1/#2 scope before closing those issues
 
 ## Decisions
 
