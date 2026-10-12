@@ -65,7 +65,7 @@ export function FeedList({ items, tabs = true }: { items: FeedItem[]; tabs?: boo
     if (!client?.account) return;
     setMineOverride((m) => ({ ...m, [id]: next }));
     try {
-      await account.whenFunded();
+      await account.whenFunded(client.account.address);
       const hash = await client.writeContract({ account: client.account, chain, address: SOCIAL_ADDRESS, abi: kleosSocialAbi, functionName: "vote", args: [BigInt(id), next] });
       await publicClient.waitForTransactionReceipt({ hash });
       await refetchTally();

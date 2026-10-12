@@ -1,12 +1,12 @@
 # Kleos in Chaos
 
-**Testnet prototype.** This project uses test tokens and is not ready for production or real funds. Security review and live acceptance remain incomplete.
-
 ## Prediction Market with a Verifiable Reputation Layer. Built on Monad testnet.
 
 <img width="3000" height="1000" alt="Kleos: your track record is worth more than their bankroll" src="https://github.com/user-attachments/assets/3f0683aa-7e7a-4590-9c67-e028b576fd30" />
 
-**[Live app](https://kleos-iota.vercel.app)** · **Demo video** _(link soon)_ · **Pitch deck** _(link soon)_ · **Envio GraphQL** _(endpoint soon)_
+**[Live app](https://kleos-iota.vercel.app)** · **Demo video** _(link soon)_ · **Pitch deck** _(link soon)_
+
+**Testnet prototype.** Kleos is built for testing and demos on Monad testnet, using testnet MON and kUSD. It is not ready for production or real funds.
 
 | Contract (Monad testnet, chain 10143) | Address |
 |---|---|
@@ -121,6 +121,7 @@ Markets, prices, recent bets, the sharp signal, calls, the feed, the leaderboard
 
 ## Known limitations
 
+- **Security status.** Known security findings remain unresolved, and the proposed contract fixes have not been deployed. Existing testnet contracts remain unchanged. This prototype is not ready for production or real funds.
 - **Jury bribery.** Disputes go to the Kleos Court, where votes stay hidden until the reveal, but a juror can prove their vote afterward, so open bribes are possible. Random draws and reputation at stake make it costly, not impossible. Jury draws use block randomness, which block producers can nudge.
 - **Parimutuel pricing.** Thin markets move sharply with each bet. LMSR is the planned upgrade for thin markets.
 - **The anomaly flag is a heuristic, not proof of insider trading.** It holds back unvested reputation for review; it does not accuse anyone.

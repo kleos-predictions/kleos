@@ -29,6 +29,8 @@ const lastFunded = new Map<string, number>(); // address → when funding starte
 const byIp = new Map<string, number[]>(); // ip → funding times in the last hour
 let recent: number[] = []; // all funding times in the last day
 let queue: Promise<unknown> = Promise.resolve(); // one funding at a time: no nonce races, no double pays
+type PendingFunding = { hash: Hex; purpose: "gas" | "usd" };
+let pendingFunding: PendingFunding | undefined;
 
 const deny = (status: number, error: string) => Response.json({ error }, { status });
 
@@ -83,16 +85,37 @@ export async function POST(request: Request) {
 }
 
 async function fund(key: Hex, address: Address, id: string, ip: string): Promise<Response> {
-  const now = Date.now();
-  if (now - (lastFunded.get(id) ?? 0) < COOLDOWN_MS) return Response.json({ funded: { gas: false, usd: false }, cooldown: true });
-
-  const [gas, usd] = await Promise.all([
+  const readBalances = () => Promise.all([
     publicClient.getBalance({ address }),
     publicClient.readContract({ address: USD_ADDRESS!, abi: kleosUsdAbi, functionName: "balanceOf", args: [address] }),
   ]);
+  let [gas, usd] = await readBalances();
+  // An account that needs no funds must not depend on another recipient's pending transfer.
+  if (gas >= GAS_FLOOR && usd >= USD_FLOOR) return Response.json({ funded: { gas: false, usd: false } });
+
+  // A timed-out receipt is not a failed transfer. Reconcile it before using this signer's
+  // nonce again, including when the next request is for a different recipient.
+  if (pendingFunding) {
+    try {
+      await confirmFunding();
+    } catch {
+      return Response.json({
+        funded: { gas: false, usd: false },
+        ...(pendingFunding ? { pending: pendingFunding } : {}),
+        error: "The previous funding transaction could not be confirmed. Check its status before requesting funds again.",
+      }, { status: 503 });
+    }
+    // The confirmed transfer may have funded this recipient. Refresh before deciding to send.
+    [gas, usd] = await readBalances();
+  }
+
   const needsGas = gas < GAS_FLOOR;
   const needsUsd = usd < USD_FLOOR;
+  const now = Date.now();
   if (!needsGas && !needsUsd) return Response.json({ funded: { gas: false, usd: false } });
+  if (now - (lastFunded.get(id) ?? 0) < COOLDOWN_MS) {
+    return Response.json({ funded: { gas: false, usd: false }, cooldown: true, error: "Test funding is on cooldown. Try again in 30 seconds." }, { status: 429 });
+  }
 
   const over = withinBudget(ip, now);
   if (over) return deny(429, over);
@@ -103,16 +126,48 @@ async function fund(key: Hex, address: Address, id: string, ip: string): Promise
   byIp.get(ip)!.push(now);
 
   const sponsor = createWalletClient({ account: privateKeyToAccount(key), chain, transport: http() });
+  const hashes: Hex[] = [];
+  const funded = { gas: false, usd: false };
   try {
-    const hashes: Hex[] = [];
-    if (needsGas) hashes.push(await sponsor.sendTransaction({ to: address, value: GAS_TOP_UP }));
-    if (needsUsd) {
-      hashes.push(await sponsor.writeContract({ address: USD_ADDRESS!, abi: kleosUsdAbi, functionName: "sponsorMint", args: [address, USD_TOP_UP] }));
+    if (needsGas) {
+      const hash = await sponsor.sendTransaction({ to: address, value: GAS_TOP_UP });
+      hashes.push(hash);
+      pendingFunding = { hash, purpose: "gas" };
+      await confirmFunding();
+      funded.gas = true;
     }
-    await Promise.all(hashes.map((hash) => publicClient.waitForTransactionReceipt({ hash })));
-    return Response.json({ funded: { gas: needsGas, usd: needsUsd }, hashes });
-  } catch (err) {
-    lastFunded.delete(id); // let the user retry right away
-    throw err;
+    if (needsUsd) {
+      const hash = await sponsor.writeContract({ address: USD_ADDRESS!, abi: kleosUsdAbi, functionName: "sponsorMint", args: [address, USD_TOP_UP] });
+      hashes.push(hash);
+      pendingFunding = { hash, purpose: "usd" };
+      await confirmFunding();
+      funded.usd = true;
+    }
+    return Response.json({ funded, hashes });
+  } catch {
+    // Keep the cooldown and any pending hash: a retry must not repeat an unverified transfer.
+    return Response.json({
+      funded,
+      hashes,
+      ...(pendingFunding ? { pending: pendingFunding } : {}),
+      error: funded.gas
+        ? "Gas funding is confirmed, but test USD funding could not be confirmed. Check the submitted transaction before trying again."
+        : "Test funding could not be confirmed. Check any submitted transaction before trying again.",
+    }, { status: 503 });
   }
+}
+
+async function confirmFunding() {
+  const pending = pendingFunding!;
+  let replaced = false;
+  const receipt = await publicClient.waitForTransactionReceipt({
+    hash: pending.hash,
+    timeout: 15_000,
+    onReplaced: ({ reason, transactionReceipt }) => {
+      replaced = reason !== "repriced";
+      if (pendingFunding) pendingFunding.hash = transactionReceipt.transactionHash;
+    },
+  });
+  pendingFunding = undefined;
+  if (replaced || receipt.status !== "success") throw new Error("Funding transaction did not succeed.");
 }

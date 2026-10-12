@@ -93,19 +93,8 @@ export function TradePanel({ market }: { market: Market }) {
     try {
       const me = client.account;
       setStep("funds");
-      await account.whenFunded();
-
       const value = parseUnits(String(amount), 6);
-      const balanceOf = () =>
-        publicClient.readContract({ address: USD_ADDRESS!, abi: kleosUsdAbi, functionName: "balanceOf", args: [me.address] });
-      let balance = await balanceOf();
-      if (balance < value) {
-        await account.requestFunds(); // the sponsor tops up accounts that ran low
-        balance = await balanceOf();
-      }
-      if (balance < value) {
-        throw new Error(`Not enough test USD: you have ${money(Number(balance) / 1e6)}. Try a smaller bet.`);
-      }
+      await account.whenFunded(me.address, value);
       const [allowance, trustedMarket] = await Promise.all([
         publicClient.readContract({ address: USD_ADDRESS!, abi: kleosUsdAbi, functionName: "allowance", args: [me.address, KLEOS_ADDRESS!] }),
         publicClient.readContract({ address: USD_ADDRESS!, abi: kleosUsdAbi, functionName: "market" }),
@@ -115,7 +104,10 @@ export function TradePanel({ market }: { market: Market }) {
         const approveTx = await client.writeContract({
           account: me, chain, address: USD_ADDRESS!, abi: kleosUsdAbi, functionName: "approve", args: [KLEOS_ADDRESS!, maxUint256],
         });
-        await publicClient.waitForTransactionReceipt({ hash: approveTx });
+        const approval = await publicClient.waitForTransactionReceipt({ hash: approveTx });
+        if (approval.status !== "success") {
+          throw new Error("Test USD approval reverted. No bet was placed.");
+        }
       }
       setStep("bet");
       const tx = text
@@ -125,7 +117,10 @@ export function TradePanel({ market }: { market: Market }) {
         : await client.writeContract({
             account: me, chain, address: KLEOS_ADDRESS!, abi: kleosAbi, functionName: "bet", args: [BigInt(market.id), side, value],
           });
-      await publicClient.waitForTransactionReceipt({ hash: tx });
+      const confirmed = await publicClient.waitForTransactionReceipt({ hash: tx });
+      if (confirmed.status !== "success") {
+        throw new Error("Your bet reverted on-chain. No bet was placed.");
+      }
       setReceipt({ side, amount, eff, call: text, secs: ((clock() - started) / 1000).toFixed(1), tx });
       setCall("");
       router.refresh(); // server-rendered calls and prices pick up the new bet
