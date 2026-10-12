@@ -4,7 +4,15 @@
 
 ## Prediction Market with a Verifiable Reputation Layer. Built on Monad testnet.
 
-<img width="3000" height="1000" alt="image" src="https://github.com/user-attachments/assets/3f0683aa-7e7a-4590-9c67-e028b576fd30" />
+<img width="3000" height="1000" alt="Kleos: your track record is worth more than their bankroll" src="https://github.com/user-attachments/assets/3f0683aa-7e7a-4590-9c67-e028b576fd30" />
+
+**[Live app](https://kleos-iota.vercel.app)** · **Demo video** _(link soon)_ · **Pitch deck** _(link soon)_ · **Envio GraphQL** _(endpoint soon)_
+
+| Contract (Monad testnet, chain 10143) | Address |
+|---|---|
+| Kleos (markets, reputation, Kleos Court) | [`0xd68a1F212fa52663468BBB6F0456Cd6e7Ce854Cb`](https://testnet.monadscan.com/address/0xd68a1F212fa52663468BBB6F0456Cd6e7Ce854Cb) |
+| KleosSocial (usernames, follows, call votes) | [`0x766d184Fc25Fe88d30cF62dC9A391cBb2975B9aA`](https://testnet.monadscan.com/address/0x766d184Fc25Fe88d30cF62dC9A391cBb2975B9aA) |
+| KleosUSD (test stablecoin) | [`0x74cb7e5f0Ef6d1A32D3b9bb7b40495b61a45B750`](https://testnet.monadscan.com/address/0x74cb7e5f0Ef6d1A32D3b9bb7b40495b61a45B750) |
 
 
 Every bet weighs money × reputation. Reputation only grows when you are right against the crowd, it shrinks faster than it grows, and every change is an on-chain event anyone can audit. Each market shows two prices: what the money says and what proven forecasters say.
@@ -16,14 +24,14 @@ Prediction markets are failing in four specific ways. Each one has a direct answ
 | Failure | What happened | Kleos answer |
 |---|---|---|
 | **Resolution capture** (Mar 2025) | In Polymarket's $7M Ukraine minerals market, one UMA token whale reportedly cast about 25% of dispute votes and forced a premature "Yes". [Source](https://thedefiant.io/news/defi/polymarket-s-usd7m-ukraine-mineral-deal-debacle-traced-to-oracle-whale) | Resolvers are gated by earned reputation, not purchasable tokens. |
-| **Conflicted judges** (2026) | A Wall Street Journal investigation found nearly 20% of disputed Polymarket outcomes involved oracle voters with stakes in the market they judged. [Source](https://www.turbinefi.com/blog/how-prediction-markets-resolve-oracles-disputes-2026) | Anyone with a position is excluded from resolving that market. |
-| **Price distortion** (Oct 2024) | One trader with eleven linked wallets pushed Polymarket's election odds 10–15 points above competing platforms. [Source](https://papers.ssrn.com/sol3/papers.cfm?abstract_id=6670638) | A reputation-weighted price shown next to the money price, with a 10% per-address cap. |
-| **Insider trading** (Apr 2026) | In the first criminal case, a soldier allegedly used classified information to bet $33,000 on the Maduro operation and cashed out about $400,000. [Source](https://fortune.com/2026/04/26/prediction-markets-insider-trading-illegal-kalshi-polymarket-robin-hanson-economist/) | Reputation vests over time, gains are capped per market, anomalies are reviewed. |
+| **Conflicted judges** (2026) | A Wall Street Journal investigation reportedly found nearly 20% of disputed Polymarket outcomes involved oracle voters with stakes in the market they judged. [Source](https://www.turbinefi.com/blog/how-prediction-markets-resolve-oracles-disputes-2026) | Anyone with a position is excluded from resolving that market. |
+| **Whale concentration** (Oct 2024) | One trader spread more than $45 million of Trump bets across several Polymarket accounts. [Source](https://www.theblock.co/post/324996/polymarket-whale-us-election-profit-france-ban) | A reputation-weighted price shown next to the money price, with a 10% per-address cap. |
+| **Insider trading** (Apr 2026) | In a federal criminal case, a soldier is charged with using classified information to bet about $33,000 on the Maduro operation and cashing out about $400,000. [Source](https://www.justice.gov/opa/pr/us-soldier-charged-using-classified-information-profit-prediction-market-bets) | Reputation vests over time, gains are capped per market, anomalies are reviewed. |
 
 ### Evidence
 
-- Small crowds of proven forecasters outperform larger crowds in both markets and polls (Atanasov, Witkowski, Mellers & Tetlock, *International Journal of Forecasting*, 2025). [Source](https://www.sciencedirect.com/science/article/abs/pii/S0169207023001413)
-- Across 5,456 Polymarket and Kalshi markets, bigger bettors were not more accurate; in some markets whales had negative edge (Daleep et al., 2026). [Source](https://klementoninvesting.substack.com/p/a-fundamental-flaw-of-prediction)
+- Small crowds of proven forecasters outperform larger crowds in both markets and polls (Atanasov, Witkowski, Mellers & Tetlock, *International Journal of Forecasting* 41(2), 2025). [Source](https://www.sciencedirect.com/science/article/abs/pii/S0169207023001413)
+- Across 5,456 Polymarket and Kalshi markets, bigger bettors were not more accurate; in some markets whales had negative edge (Daleep et al., 2026). [Paper](https://papers.ssrn.com/sol3/papers.cfm?abstract_id=6322678) · [Summary](https://klementoninvesting.substack.com/p/a-fundamental-flaw-of-prediction)
 
 > **Implementation status:** every answer above is implemented and tested in `contracts/` (48 tests). The contracts are deployed on Monad testnet (`contracts/ignition/deployments/chain-10143/deployed_addresses.json`).
 
@@ -46,12 +54,31 @@ Money pays money: payouts split the losing pool by stake, so newcomers earn the 
 - **Profiles.** Usernames, follows, reputation over time and a history where every change links to its transaction, with the math shown on hover.
 - **Compare.** Real controversies (the Zelensky suit, Khamenei on Kalshi) replayed on Kleos, including what Kleos would *not* fix.
 
+## Hackathon
+
+**Track: Social, Attention & Culture.** Kleos moves attention from the loudest voice and the biggest wallet to whoever called it first. Calls are opinions with receipts, scored when the market resolves.
+
+**Best Mera-Powered UX on Monad**
+- Landing → "Start with a passkey" → Touch ID → a confirmed bet on Monad. Gas and test USD are sponsored, and the trade panel shows the seconds it took.
+- Small bets, follows, votes, settling and claiming need no prompt inside a session. Bets over $100, bonds and jury votes ask for the passkey again.
+- Nothing secret is stored: sign in on another device and get the same account. A juror's hidden-vote secret comes from the passkey, so a vote cast on a laptop can be revealed on a phone.
+
+**Best Use of Envio**
+- A HyperIndex indexer (`indexer/`) on Envio Cloud, synced through HyperSync, covering Kleos, the Kleos Court and KleosSocial.
+- Entities no single event contains: `Trader` aggregated from six event types, and a per-market sharp signal that joins bets with reputation.
+- The web app reads markets, bets, calls, the feed, the leaderboard and reputation history from its GraphQL, and every reputation change links to its transaction.
+
+## Team
+
+Daniela Zschaber ([@danimim](https://github.com/danimim)): product, contracts and web. Artur Pokusin ([@apokusin](https://github.com/apokusin)): Envio indexer and review.
+
 ## Repository
 
 ```
 contracts/   Solidity (Hardhat 3): Kleos.sol (markets, reputation, Kleos Court), KleosSocial.sol
              (usernames, follows, votes), KleosUSD.sol (test stablecoin), tests, deploy and demo scripts
 web/         Next.js app: markets, market page with the court, feed, profiles, compare, how it works
+indexer/     Envio HyperIndex: config.yaml, schema.graphql, src/handlers/ (see indexer/ARCHITECTURE.md)
 brand/       Brand kit: logos, tier laurels, palette, typography, icons (see brand/README.md)
 design/      Reference exports from Claude Design
 ```
