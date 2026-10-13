@@ -40,7 +40,7 @@ function deferred() {
 
 // Executes the production provider against deterministic hooks and fake WebAuthn/network.
 // It tests authority transitions; it does not claim to replay physical browser ceremonies.
-function providerHarness({ create = async () => account(), unlock = async () => account(), reveal = async () => "synthetic phrase", cached = null, blockedStorage = false, fundingError = false, gasBalance = async () => 0n } = {}) {
+function providerHarness({ create = async () => account(), unlock = async () => account(), reveal = async () => "synthetic phrase", cached = null, blockedStorage = false, fundingError = false, gasBalance = async () => fundingError ? 0n : viem.parseEther("0.3") } = {}) {
   let cursor = 0;
   const hooks = [];
   let pendingEffects = [];
@@ -79,8 +79,10 @@ function providerHarness({ create = async () => account(), unlock = async () => 
     "react/jsx-runtime": { jsx: (type, props) => ({ type, props }) },
     viem: { createWalletClient: ({ account }) => ({ account }), http: () => ({}) },
     "@category-labs/mera/viem": { toViemAccount: (session) => ({ address: session.address ?? ADDRESS_A, signMessage: async () => "0x" + "11".repeat(65) }) },
-    "@/lib/chain": { chain: { id: 10143 }, POLLING_MS: 4000, publicClient: { getBalance: gasBalance } },
+    "@/lib/chain": { chain: { id: 10143 }, POLLING_MS: 4000, USD_ADDRESS: ADDRESS_B, publicClient: { getBalance: gasBalance } },
     "@/lib/mera": { createAccount: create, unlockAccount: unlock, revealRecoveryPhrase: reveal, describeAccountError: (error) => error.message },
+    "@/lib/abi": { kleosUsdAbi: [] },
+    "@/lib/funding": load("lib/funding.ts"),
     "@/lib/account-lifecycle": lifecycle,
     "@/lib/sponsor-proof": proof,
   }, {
@@ -186,12 +188,13 @@ test("funding rejects HTTP failures and does not switch its requesting address",
 
 test("gas-only actions survive a faucet USD failure only with real gas for the selected signer", async () => {
   const checked = [];
-  const harness = providerHarness({ fundingError: true, gasBalance: async ({ address }) => { checked.push(address); return 1_000_000n; } });
+  const harness = providerHarness({ fundingError: true, gasBalance: async ({ address }) => { checked.push(address); return viem.parseEther("0.06"); } });
   let context = harness.render();
   await context.authorize();
   context = harness.render();
   await context.whenFunded(ADDRESS_A);
   assert.deepEqual(checked, [ADDRESS_A]);
+  await new Promise(setImmediate); // Optional funding completes after the balance-first action gate.
   assert.match(harness.render().error, /Sponsor is unavailable/, "the faucet failure is still shown");
   await assert.rejects(context.requestFunds(ADDRESS_A), /Sponsor is unavailable/, "explicit USD top-ups still reject failures");
 });
@@ -208,6 +211,20 @@ test("locking during the fallback gas read revokes permission to continue", asyn
   context.lock();
   balance.resolve(1_000_000n);
   await assert.rejects(waiting, /changed or locked/);
+});
+
+test("fresh authorization of the same address revokes an earlier funding check", async () => {
+  const balance = deferred();
+  const entered = deferred();
+  const harness = providerHarness({ gasBalance: () => { entered.resolve(); return balance.promise; } });
+  let context = harness.render();
+  await context.authorize();
+  context = harness.render();
+  const waiting = context.whenFunded(ADDRESS_A);
+  await entered.promise;
+  assert.ok(await context.authorize({ fresh: true }));
+  balance.resolve(viem.parseEther("0.3"));
+  await assert.rejects(waiting, /changed or locked/, "the same address cannot reuse an obsolete session epoch");
 });
 
 test("another tab's account replacement locks the old signing session", async () => {
@@ -296,10 +313,16 @@ function sponsorHarness({ failSend = false, failConfirmation = false, failUsdCon
       writeContract: async () => { sends++; return "0x" + "22".repeat(32); },
     }) },
     "viem/accounts": { privateKeyToAccount: () => ({ address: ADDRESS_B }) },
-    "@/lib/chain": { chain: { id: 10143 }, USD_ADDRESS: ADDRESS_B, publicClient: { getBalance: async () => gasBalance, readContract: async () => usdBalance } },
+    "@/lib/chain": { chain: { id: 10143 }, USD_ADDRESS: ADDRESS_B, publicClient: {
+      getBalance: async () => gasBalance, readContract: async () => usdBalance,
+      getTransactionCount: async ({ blockTag }) => blockTag === "latest" ? Math.max(0, sends - 1) : sends,
+      getTransactionReceipt: async ({ hash }) => { throw new viem.TransactionReceiptNotFoundError({ hash }); },
+      getTransaction: async ({ hash }) => ({ hash, from: ADDRESS_B, nonce: Math.max(0, sends - 1) }),
+    } },
     "@/lib/abi": { kleosUsdAbi: [{ type: "function", name: "sponsorMint", stateMutability: "nonpayable", inputs: [{ name: "to", type: "address" }, { name: "amount", type: "uint256" }], outputs: [] }] },
     "@/lib/sponsor-proof": proof,
     "@/lib/sponsor-coordinator": { SponsorCoordinator },
+    "@/lib/funding": load("lib/funding.ts"),
     "@/lib/transactions": { ...transactions, confirmTransaction: async (_client, hash, intent) => {
       confirmations.push(intent);
       if (failConfirmation || (failUsdConfirmation && intent.data !== "0x")) throw new transactions.TransactionRejectedError("Synthetic reverted confirmation", hash);

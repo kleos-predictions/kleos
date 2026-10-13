@@ -35,7 +35,7 @@ Defined in `schema.graphql`, built by `src/handlers/`.
 | `CallVote` | `CallVoted` | Each address's vote on a call |
 | `Protocol` | Market, bet, call, juror and revenue events | Totals across the protocol (Envio Cloud has no `_aggregate` queries) |
 
-Bet buddies (`BuddyPair`, issue #2) and the web client (`web/src/lib/indexer.ts`, issue #3) are planned.
+The web client (`web/src/lib/indexer.ts`) reads indexed markets, calls, profiles and the leaderboard. It validates the processing checkpoint and falls back to bounded chain reads when the indexer is unavailable or its schema is unsupported. Bet buddies (`BuddyPair`, issue #2) are planned.
 
 Exact activation history is nullable `BigInt`, with provenance. Direct seed input resets it; an unrecoverable nested seed makes it unknown. Current court commitments can also be unknown for nested writes. Clients must preserve these nulls. A successful claim is identified by `bonusClaimed`/`BonusClaim`, including when its amount is zero. Schema changes require a full replay before serving the new API; they do not change the deployed contracts.
 

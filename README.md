@@ -18,7 +18,7 @@ Each market shows money and reputation-weighted pool shares. Principal payout de
 
 Known security findings remain unresolved. The contract fixes in this branch have not been deployed; existing testnet contracts remain unchanged. This prototype is not ready for production or real funds.
 
-The full local contract and operator suite currently has **113 passing tests** (60 contract tests and 53 operator tests). The web has 72 regression tests; the indexer has 36 simulations and one fresh actual local handler replay passing. Testnet integration and hosted GraphQL acceptance remain unexecuted. Tests do not certify commercial demand, physical passkey behavior or mechanism security.
+The full local contract and operator suite currently has **145 passing tests** (60 contract tests and 85 operator tests). The web has 118 regression tests; the indexer has 36 simulations and one fresh actual local handler replay passing. Testnet integration and hosted GraphQL acceptance remain unexecuted. Tests do not certify commercial demand, physical passkey behavior or mechanism security.
 
 ## Implemented mechanics
 

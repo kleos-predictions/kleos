@@ -2,7 +2,7 @@
 // queue, request budgets and cooldown prevent overlap within one process only. A shared
 // durable budget and signer queue are required across replicas or with valuable funds.
 
-import { createWalletClient, encodeFunctionData, http, isAddress, parseEther, parseUnits, verifyMessage, type Hex } from "viem";
+import { createWalletClient, encodeFunctionData, http, isAddress, parseEther, parseUnits, verifyMessage, TransactionNotFoundError, TransactionReceiptNotFoundError, type Address, type Hex } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { chain, publicClient, USD_ADDRESS } from "@/lib/chain";
 import { kleosUsdAbi } from "@/lib/abi";
@@ -10,7 +10,7 @@ import { parseSponsorProof, sponsorshipMessage, SPONSOR_PROOF_TTL_MS } from "@/l
 import { SponsorCoordinator } from "@/lib/sponsor-coordinator";
 import { confirmTransaction, TransactionRejectedError, TransactionUncertainError, type TransactionIntent } from "@/lib/transactions";
 
-const GAS_FLOOR = parseEther("0.06");
+import { FUNDING_GAS_FLOOR } from "@/lib/funding";
 const GAS_TOP_UP = parseEther("0.3");
 const USD_FLOOR = parseUnits("50", 6);
 const USD_TOP_UP = parseUnits("1000", 6);
@@ -35,7 +35,8 @@ type SponsorResult = { funded: { gas: boolean; usd: boolean }; status?: number; 
 const coordinator = new SponsorCoordinator();
 const lastReserved = new Map<string, number>();
 const recentProofs = new Map<string, { expiresAt: number; promise: Promise<SponsorResult> }>();
-const unconfirmedFunding = new Map<string, { purpose: "gas" | "usd"; hash: Hex; intent: TransactionIntent }>();
+type PendingFunding = { purpose: "gas" | "usd"; hash: Hex; intent: TransactionIntent; recipient: Address; nonce: number };
+const unconfirmedFunding = new Map<string, PendingFunding>();
 let unknownBroadcast: { purpose: "gas" | "usd"; intent: TransactionIntent } | undefined;
 
 // Proxy IP headers are a deployment-provided hint, not identity. The global budgets still
@@ -112,12 +113,25 @@ export async function POST(request: Request) {
 
     const run = coordinator.run(id, async (): Promise<SponsorResult> => {
       if (Date.now() - proof.issuedAt > SPONSOR_PROOF_TTL_MS) throw new Error("The queued funding proof expired.");
+      // Balance checks stay inside the signer queue. An already-funded account does not
+      // depend on another recipient's pending transfer or an optional faucet grant.
+      const readBalances = () => Promise.all([
+        publicClient.getBalance({ address: proof.address }),
+        publicClient.readContract({ address: usdAddress, abi: kleosUsdAbi, functionName: "balanceOf", args: [proof.address] }),
+      ]);
+      let [gas, usd] = await readBalances();
+      if (gas >= FUNDING_GAS_FLOOR && usd >= USD_FLOOR) return { funded: { gas: false, usd: false } };
       if (unknownBroadcast) return { funded: { gas: false, usd: false }, error: `The ${unknownBroadcast.purpose} funding broadcast to ${unknownBroadcast.intent.to} has an unknown result. The operator must reconcile the sponsor nonce before further funding.` };
-      // Every request uses the same sponsor nonce sequence. A pending transfer to another
-      // recipient must be reconciled too; merely serializing requests does not prove inclusion.
+      const sponsor = createWalletClient({ account: privateKeyToAccount(key), chain, transport: http() });
+      // Pin retries to the original nonce: a delayed original and its retry cannot both pay.
+      const sendGrant = (purpose: PendingFunding["purpose"], recipient: Address, nonce: number): Promise<Hex> => purpose === "gas"
+        ? sponsor.sendTransaction({ to: recipient, value: GAS_TOP_UP, nonce })
+        : sponsor.writeContract({ address: usdAddress, abi: kleosUsdAbi, functionName: "sponsorMint", args: [recipient, USD_TOP_UP], nonce });
       for (const [recipient, previous] of unconfirmedFunding) {
-        try { await confirmTransaction(publicClient, previous.hash, previous.intent, 15_000); unconfirmedFunding.delete(recipient); }
-        catch (failure) {
+        try {
+          await reconcileFunding(previous, sponsor.account.address, sendGrant);
+          unconfirmedFunding.delete(recipient);
+        } catch (failure) {
           if (failure instanceof TransactionRejectedError) unconfirmedFunding.delete(recipient);
           else {
             if (failure instanceof TransactionUncertainError) previous.hash = failure.hash;
@@ -125,15 +139,12 @@ export async function POST(request: Request) {
           }
         }
       }
-      // Read inside the signer queue: earlier funding may have changed these balances.
-      const [gas, usd] = await Promise.all([
-        publicClient.getBalance({ address: proof.address }),
-        publicClient.readContract({ address: usdAddress, abi: kleosUsdAbi, functionName: "balanceOf", args: [proof.address] }),
-      ]);
-      const needsGas = gas < GAS_FLOOR;
+      // A confirmed/replaced nonce may have funded this recipient; never reuse stale balances.
+      [gas, usd] = await readBalances();
+      const needsGas = gas < FUNDING_GAS_FLOOR;
       const needsUsd = usd < USD_FLOOR;
       if (!needsGas && !needsUsd) return { funded: { gas: false, usd: false } };
-      if (Date.now() - (lastReserved.get(id) ?? 0) < COOLDOWN_MS) return { funded: { gas: false, usd: false }, cooldown: true };
+      if (Date.now() - (lastReserved.get(id) ?? 0) < COOLDOWN_MS) return { funded: { gas: false, usd: false }, cooldown: true, status: 429, error: "Test funding is on cooldown. Try again in 30 seconds." };
       const over = withinBudget(ip, Date.now());
       if (over) return { funded: { gas: false, usd: false }, error: over, status: 429 };
       // Reserve before any send, including attempts that fail. Zero USD does not bypass it.
@@ -141,31 +152,24 @@ export async function POST(request: Request) {
       lastReserved.set(id, reservedAt);
       recent.push(reservedAt);
       byIp.set(ip, [...(byIp.get(ip) ?? []), reservedAt]);
-      const sponsor = createWalletClient({ account: privateKeyToAccount(key), chain, transport: http() });
       const hashes: Hex[] = [];
       const funded = { gas: false, usd: false };
       try {
-        if (needsGas) {
-          const intent: TransactionIntent = { sender: sponsor.account.address, to: proof.address, data: "0x", value: GAS_TOP_UP };
-          unknownBroadcast = { purpose: "gas", intent };
-          const hash = await sponsor.sendTransaction({ to: proof.address, value: GAS_TOP_UP });
-          unconfirmedFunding.set(id, { purpose: "gas", hash, intent });
+        for (const purpose of ["gas", "usd"] as const) {
+          if (!(purpose === "gas" ? needsGas : needsUsd)) continue;
+          const nonce = await publicClient.getTransactionCount({ address: sponsor.account.address, blockTag: "pending" });
+          const intent: TransactionIntent = purpose === "gas"
+            ? { sender: sponsor.account.address, to: proof.address, data: "0x", value: GAS_TOP_UP }
+            : { sender: sponsor.account.address, to: usdAddress, data: encodeFunctionData({ abi: kleosUsdAbi, functionName: "sponsorMint", args: [proof.address, USD_TOP_UP] }) };
+          // An initial hashless broadcast remains fail-closed. A known dropped grant instead
+          // retains its original nonce and intent throughout reconciliation and retry.
+          unknownBroadcast = { purpose, intent };
+          const hash = await sendGrant(purpose, proof.address, nonce);
+          unconfirmedFunding.set(id, { purpose, hash, intent, recipient: proof.address, nonce });
           unknownBroadcast = undefined;
-          const receipt = await confirmTransaction(publicClient, hash, intent);
+          const receipt = await confirmTransaction(publicClient, hash, intent, 15_000);
           hashes.push(receipt.transactionHash);
-          funded.gas = true;
-          unconfirmedFunding.delete(id);
-        }
-        if (needsUsd) {
-          const data = encodeFunctionData({ abi: kleosUsdAbi, functionName: "sponsorMint", args: [proof.address, USD_TOP_UP] });
-          const intent = { sender: sponsor.account.address, to: usdAddress, data };
-          unknownBroadcast = { purpose: "usd", intent };
-          const hash = await sponsor.writeContract({ address: usdAddress, abi: kleosUsdAbi, functionName: "sponsorMint", args: [proof.address, USD_TOP_UP] });
-          unconfirmedFunding.set(id, { purpose: "usd", hash, intent });
-          unknownBroadcast = undefined;
-          const receipt = await confirmTransaction(publicClient, hash, intent);
-          hashes.push(receipt.transactionHash);
-          funded.usd = true;
+          funded[purpose] = true;
           unconfirmedFunding.delete(id);
         }
       } catch (failure) {
@@ -185,4 +189,39 @@ export async function POST(request: Request) {
   } catch {
     return Response.json({ error: "Test funding failed. Wait 30 seconds, then request funds again." }, { status: 503 });
   }
+}
+
+
+async function reconcileFunding(
+  pending: PendingFunding,
+  sponsor: Address,
+  resend: (purpose: PendingFunding["purpose"], recipient: Address, nonce: number) => Promise<Hex>,
+) {
+  const receipt = await publicClient.getTransactionReceipt({ hash: pending.hash }).catch((error: unknown) => {
+    if (error instanceof TransactionReceiptNotFoundError) return null;
+    throw error;
+  });
+  if (receipt) {
+    // Keep the audit's intent verification, including replacements and changed calldata.
+    await confirmTransaction(publicClient, pending.hash, pending.intent, 15_000);
+    return;
+  }
+  const transaction = await publicClient.getTransaction({ hash: pending.hash }).catch((error: unknown) => {
+    if (error instanceof TransactionNotFoundError) return null;
+    throw error;
+  });
+  const [confirmedNonce, pendingNonce] = await Promise.all([
+    publicClient.getTransactionCount({ address: pending.intent.sender, blockTag: "latest" }),
+    publicClient.getTransactionCount({ address: pending.intent.sender, blockTag: "pending" }),
+  ]);
+  // A consumed nonce cannot execute again. The caller refreshes balances rather than
+  // declaring the old grant successful when its final hash/intent was never verified.
+  if (confirmedNonce > pending.nonce) return;
+  if (!transaction) {
+    if (confirmedNonce !== pending.nonce || pendingNonce !== pending.nonce || sponsor !== pending.intent.sender) {
+      throw new Error("Funding transaction is still unresolved.");
+    }
+    pending.hash = await resend(pending.purpose, pending.recipient, pending.nonce);
+  }
+  await confirmTransaction(publicClient, pending.hash, pending.intent, 15_000);
 }

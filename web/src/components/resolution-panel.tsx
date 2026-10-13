@@ -3,8 +3,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { encodeAbiParameters, encodeFunctionData, keccak256, toHex, type Address, type Hex, type TransactionReceipt, type WalletClient } from "viem";
-import { KLEOS_ADDRESS, SOCIAL_ADDRESS, USD_ADDRESS, chain, publicClient, shortAddress } from "@/lib/chain";
-import { kleosAbi, kleosSocialAbi, kleosUsdAbi } from "@/lib/abi";
+import { KLEOS_ADDRESS, SOCIAL_ADDRESS, chain, publicClient, shortAddress } from "@/lib/chain";
+import { kleosAbi, kleosSocialAbi } from "@/lib/abi";
 import { describeAccountError } from "@/lib/mera";
 import { RESOLUTION_STAGES } from "@/lib/data";
 import { useKleosAccount } from "./account";
@@ -183,10 +183,8 @@ export function ResolutionPanel({ marketId, oracle }: { marketId: number; oracle
     try {
       const client = await account.authorize({ fresh }); // first await: may show the passkey prompt
       if (!client?.account) return;
-      await account.whenFunded(client.account.address);
+      await account.whenFunded(client.account.address, bond ?? 0n);
       if (bond) {
-        const balance = await publicClient.readContract({ address: USD_ADDRESS!, abi: kleosUsdAbi, functionName: "balanceOf", args: [client.account.address] });
-        if (balance < bond) await account.requestFunds(client.account.address);
         await ensureUsdAllowance(client, bond);
       }
       await run(client);
@@ -361,7 +359,7 @@ export function ResolutionPanel({ marketId, oracle }: { marketId: number; oracle
                         const salt = await deriveSalt(c, id, court.round);
                         const commitment = voteCommitment(id, court.round, c.account!.address, v.value, salt);
                         const hash = await write(c, "commitVote", [id, commitment]);
-                        setNotice(`Hidden vote sent. You'll reveal it after ${clockText(Number(court.commitEnd) - now)}; nothing was saved on this device.`);
+                        setNotice(`Hidden vote confirmed. You'll reveal it after ${clockText(Number(court.commitEnd) - now)}; nothing was saved on this device.`);
                         return hash;
                       })} variant={iAmJuror.committed ? "btn-no" : v.value === 1 ? "btn-yes" : v.value === 2 ? "btn-no-active" : "btn-no"} busy={Boolean(busy)} stale={stale} />}
                   </span>
@@ -403,11 +401,15 @@ export function ResolutionPanel({ marketId, oracle }: { marketId: number; oracle
                   const discovery = await readBettorDiscovery(id, blockNumber);
                   if (discovery.legacy) setNotice("Using the legacy full-list getter for this deployment (at most 1,000 bettors).");
                   if (discovery.count === 0n) await write(c, "settle", [id, []]);
-                  for (let offset = 0n; offset < discovery.count; offset += 100n) {
-                    const batch = await discovery.page(offset);
-                    if (batch.length === 0 || batch.length > 100) throw new Error("Settlement discovery returned an invalid page.");
-                    await write(c, "settle", [id, batch]);
-                    setNotice(`Settled through bettor ${offset + BigInt(batch.length)} of ${discovery.count}.`);
+                  try {
+                    for (let offset = 0n; offset < discovery.count; offset += 100n) {
+                      const batch = await discovery.page(offset);
+                      if (batch.length === 0 || batch.length > 100) throw new Error("Settlement discovery returned an invalid page.");
+                      await write(c, "settle", [id, batch]);
+                      setNotice(`Settled through bettor ${offset + BigInt(batch.length)} of ${discovery.count}.`);
+                    }
+                  } catch (failure) {
+                    throw new Error(`${describeAccountError(failure)} Already confirmed batches remain settled. Check the pending transaction before retrying.`);
                   }
                 })} busy={Boolean(busy)} stale={stale} />}
             {snap.bonusOpen && snap.me.bonus > 0n && !snap.me.bonusClaimed &&

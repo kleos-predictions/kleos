@@ -138,16 +138,11 @@ export function TradePanel({ market }: { market: Market }) {
         return;
       }
       setStep("funds");
-      await account.whenFunded(me.address);
-
       const value = parseUnits(String(amount), 6);
+      await account.whenFunded(me.address, value);
       const balanceOf = () =>
         publicClient.readContract({ address: USD_ADDRESS!, abi: kleosUsdAbi, functionName: "balanceOf", args: [me.address] });
-      let balance = await balanceOf();
-      if (balance < value) {
-        await account.requestFunds(me.address); // the sponsor tops up accounts that ran low
-        balance = await balanceOf();
-      }
+      const balance = await balanceOf();
       if (balance < value) {
         throw new Error(`Not enough test USD: you have ${money(Number(balance) / 1e6)}. Try a smaller bet.`);
       }

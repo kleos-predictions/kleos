@@ -4,8 +4,8 @@ import { useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useReadContract } from "wagmi";
 import { encodeFunctionData, parseUnits, type Address } from "viem";
-import { IS_LIVE, KLEOS_ADDRESS, USD_ADDRESS, chain, publicClient } from "@/lib/chain";
-import { kleosAbi, kleosUsdAbi } from "@/lib/abi";
+import { IS_LIVE, KLEOS_ADDRESS, chain, publicClient } from "@/lib/chain";
+import { kleosAbi } from "@/lib/abi";
 import { describeAccountError } from "@/lib/mera";
 import { CATEGORIES } from "@/lib/data";
 import { useKleosAccount } from "./account";
@@ -55,12 +55,10 @@ export function CreateMarketForm() {
     try {
       const client = await account.authorize({ fresh: true }); // first await: a bond always asks for the passkey
       if (!client?.account) return;
-      await account.whenFunded(client.account.address);
       const actualOwner = await publicClient.readContract({ address: KLEOS_ADDRESS!, abi: kleosAbi, functionName: "owner" });
       const actualTeam = actualOwner.toLowerCase() === client.account.address.toLowerCase();
+      await account.whenFunded(client.account.address, actualTeam ? 0n : COST);
       if (!actualTeam) {
-        const balance = await publicClient.readContract({ address: USD_ADDRESS!, abi: kleosUsdAbi, functionName: "balanceOf", args: [client.account.address] });
-        if (balance < COST) await account.requestFunds(client.account.address);
         await ensureUsdAllowance(client, COST);
       }
       const hash = await client.writeContract({

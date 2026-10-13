@@ -1,7 +1,1 @@
 *.pdf binary
-
-# Preserve captured evidence exactly as produced by the tools.
-audit/**/evidence/*.log -whitespace
-audit/**/evidence/**/*.log -whitespace
-audit/**/evidence/*.csv whitespace=cr-at-eol
-audit/**/evidence/external-review-packet.md -whitespace
