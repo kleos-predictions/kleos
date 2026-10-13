@@ -224,10 +224,10 @@ for (const status of ["success", "reverted"]) {
 
 const sponsorUnavailable = async () => ({ ok: false, json: async () => ({ error: "Sponsorship is not configured" }) });
 
-test("a funded $10 bet proceeds during sponsor failure with less than either faucet threshold", async () => {
+test("a $10 bet with enough gas proceeds during sponsor failure below the faucet's USD threshold", async () => {
   const h = harness("TradePanel", { funding: {
     response: sponsorUnavailable,
-    getBalance: async () => viem.parseEther("0.01"),
+    getBalance: async () => viem.parseEther("0.06"),
     balanceOf: async () => viem.parseUnits("10", 6),
   } });
   nodes(h.render()).find((node) => node.props?.["aria-label"] === "Amount in test USD").props.onChange({ target: { value: "10" } });
@@ -247,7 +247,7 @@ for (const action of ["Finalize", "Reveal my vote", "Settle everyone"]) {
     }
     const h = harness("ResolutionPanel", { snap, bettors: [address], funding: {
       response: async () => { throw new Error("Sponsor network unavailable"); },
-      getBalance: async () => viem.parseEther("0.01"),
+      getBalance: async () => viem.parseEther("0.06"),
       balanceOf: async () => { assert.fail("Token-free actions must not read or require kUSD"); },
     } });
     await click(h, action);
@@ -258,12 +258,16 @@ for (const action of ["Finalize", "Reveal my vote", "Settle everyone"]) {
   });
 }
 
-for (const missing of ["gas", "usd"]) {
-  test(`a bet with insufficient ${missing} remains blocked when sponsorship fails`, async () => {
+for (const [scenario, gas, usd] of [
+  ["no gas", "0", "80"],
+  ["only 0.01 MON", "0.01", "80"],
+  ["insufficient USD", "0.06", "79"],
+]) {
+  test(`a bet with ${scenario} remains blocked when sponsorship fails`, async () => {
     const h = harness("TradePanel", { funding: {
       response: sponsorUnavailable,
-      getBalance: async () => missing === "gas" ? 0n : viem.parseEther("0.01"),
-      balanceOf: async () => viem.parseUnits(missing === "usd" ? "79" : "80", 6),
+      getBalance: async () => viem.parseEther(gas),
+      balanceOf: async () => viem.parseUnits(usd, 6),
     } });
     await click(h, "Place bet · Yes");
     assert.equal(h.writes.length, 0);
@@ -289,7 +293,7 @@ for (const tokens of [14, 15]) {
     snap.market.proposedAt = BigInt(now);
     const h = harness("ResolutionPanel", { snap, funding: {
       response: sponsorUnavailable,
-      getBalance: async () => viem.parseEther("0.01"),
+      getBalance: async () => viem.parseEther("0.06"),
       balanceOf: async () => viem.parseUnits(String(tokens), 6),
     } });
     await click(h, "Dispute · $15 bond");

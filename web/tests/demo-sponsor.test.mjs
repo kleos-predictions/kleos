@@ -4,7 +4,7 @@ import { createRequire } from "node:module";
 import test from "node:test";
 import { runInNewContext } from "node:vm";
 import ts from "typescript";
-import { isAddress, parseEther, parseUnits } from "viem";
+import { isAddress, parseEther, parseUnits, TransactionNotFoundError, TransactionReceiptNotFoundError } from "viem";
 import { providerHarness } from "./helpers/account-provider.mjs";
 
 const require = createRequire(import.meta.url);
@@ -27,42 +27,73 @@ function sponsorHarness() {
   const events = [];
   const balances = new Map();
   const outcomes = { gas: "success", usd: "success" };
+  const rpc = { receiptError: null, transactionError: null, nonceError: null, pendingNonce: null, confirmedNonce: null };
+  const mined = new Map();
+  let confirmedNonce = 0;
   let timestamp = 1_000_000;
   class Clock extends Date { static now() { return timestamp; } }
   function balance(address) {
     if (!balances.has(address)) balances.set(address, { gas: 0n, usd: 0n });
     return balances.get(address);
   }
-  async function send(purpose, to, amount) {
+  function mine(tx, outcome = "success") {
+    if (mined.has(tx.nonce) && mined.get(tx.nonce) !== tx.hash) throw new Error("Nonce already consumed");
+    mined.set(tx.nonce, tx.hash);
+    confirmedNonce = Math.max(confirmedNonce, tx.nonce + 1);
+    tx.receipt = { status: outcome === "reverted" ? "reverted" : "success", transactionHash: tx.hash };
+    if (outcome === "success" && !tx.applied) { balance(tx.to)[tx.purpose] += tx.amount; tx.applied = true; }
+    return tx.receipt;
+  }
+  async function send(purpose, to, amount, nonce) {
+    assert.ok(Number.isInteger(nonce), "each grant must pin its nonce before submitting");
     const hash = `0x${(sent.length + 1).toString(16).padStart(64, "0")}`;
-    sent.push({ hash, purpose, to, amount, applied: false });
+    sent.push({ hash, purpose, to, amount, nonce, applied: false, dropped: false });
     events.push(`send ${purpose}`);
     return hash;
   }
   const { POST } = load("app/api/sponsor/route.ts", {
-    viem: { isAddress, parseEther, parseUnits, http: () => ({}), createWalletClient: () => ({
-      sendTransaction: ({ to, value }) => send("gas", to, value),
-      writeContract: ({ args }) => send("usd", args[0], args[1]),
+    viem: { isAddress, parseEther, parseUnits, TransactionNotFoundError, TransactionReceiptNotFoundError, http: () => ({}), createWalletClient: () => ({
+      sendTransaction: ({ to, value, nonce }) => send("gas", to, value, nonce),
+      writeContract: ({ args, nonce }) => send("usd", args[0], args[1], nonce),
     }) },
     "viem/accounts": { privateKeyToAccount: () => ({ address: OTHER }) },
     "@/lib/abi": { kleosUsdAbi: [] },
+    "@/lib/funding": load("lib/funding.ts", {}),
     "@/lib/chain": { chain: {}, USD_ADDRESS: OTHER, publicClient: {
       getBalance: async ({ address }) => balance(address).gas,
       readContract: async ({ args }) => balance(args[0]).usd,
+      getTransactionCount: async ({ address, blockTag }) => {
+        assert.equal(address, OTHER, "nonce evidence must belong to the sponsor");
+        if (rpc.nonceError) throw rpc.nonceError;
+        if (blockTag === "latest") return rpc.confirmedNonce ?? confirmedNonce;
+        return rpc.pendingNonce ?? Math.max(confirmedNonce, ...sent.filter((tx) => !tx.dropped).map((tx) => tx.nonce + 1));
+      },
+      getTransactionReceipt: async ({ hash }) => {
+        if (rpc.receiptError) throw rpc.receiptError;
+        const tx = sent.find((entry) => entry.hash === hash);
+        if (!tx?.receipt) throw new TransactionReceiptNotFoundError({ hash });
+        return tx.receipt;
+      },
+      getTransaction: async ({ hash }) => {
+        if (rpc.transactionError) throw rpc.transactionError;
+        const tx = sent.find((entry) => entry.hash === hash);
+        if (!tx || tx.dropped) throw new TransactionNotFoundError({ hash });
+        return { hash, nonce: tx.nonce, from: OTHER };
+      },
       waitForTransactionReceipt: async ({ hash, onReplaced }) => {
         const tx = sent.find((entry) => entry.hash === hash);
         events.push(`confirm ${tx.purpose}`);
         const outcome = outcomes[tx.purpose];
         if (outcome === "timeout") throw new Error("Synthetic receipt timeout");
-        const receipt = { status: outcome === "reverted" ? "reverted" : "success", transactionHash: hash };
+        const receipt = mine(tx, outcome);
         if (outcome === "cancelled") onReplaced({ reason: "cancelled", transactionReceipt: receipt });
-        if (outcome === "success" && !tx.applied) { balance(tx.to)[tx.purpose] += tx.amount; tx.applied = true; }
         return receipt;
       },
     } },
   }, { Request, Response, URL, Date: Clock, process: { env: { SPONSOR_PRIVATE_KEY: "stub-never-used-as-a-key" } } });
   return {
-    sent, events, outcomes,
+    sent, events, outcomes, rpc, balance, mine,
+    consumeNonce: (nonce) => { mined.set(nonce, "external replacement"); confirmedNonce = Math.max(confirmedNonce, nonce + 1); },
     advance: () => { timestamp += 31_000; },
     request: (address = ADDRESS) => POST(new Request("https://kleos.example/api/sponsor", {
       method: "POST", headers: { "content-type": "application/json", origin: "https://kleos.example", host: "kleos.example" },
@@ -135,6 +166,81 @@ test("an uncertain mint retains its hash and never repeats after it confirms", a
   assert.equal((await h.request()).status, 200);
   assert.equal(h.sent.length, 2);
 });
+
+for (const purpose of ["gas", "usd"]) {
+  test(`a dropped ${purpose} grant retries its original recipient at the same nonce`, async () => {
+    const h = sponsorHarness();
+    h.outcomes[purpose] = "timeout";
+    assert.equal((await h.request()).status, 503);
+    const original = h.sent.at(-1);
+    original.dropped = true;
+    h.advance();
+    h.outcomes[purpose] = "success";
+
+    assert.equal((await h.request(OTHER)).status, 200, "a dropped grant must not block every other account forever");
+    const attempts = h.sent.filter((tx) => tx.to === ADDRESS && tx.purpose === purpose);
+    assert.equal(attempts.length, 2);
+    assert.equal(attempts[1].nonce, original.nonce, "retrying at a new nonce could duplicate the grant");
+    assert.equal(attempts[1].amount, original.amount);
+    assert.throws(() => h.mine(original), /Nonce already consumed/, "a late original cannot also execute");
+    assert.equal((await h.request()).status, 200);
+    assert.equal(h.balance(ADDRESS).gas, parseEther("0.3"));
+    assert.equal(h.balance(ADDRESS).usd, parseUnits("1000", 6));
+    assert.equal(h.balance(OTHER).gas, parseEther("0.3"));
+    assert.equal(h.balance(OTHER).usd, parseUnits("1000", 6));
+  });
+}
+
+test("a late receipt reconciles the original grant without resending it", async () => {
+  const h = sponsorHarness();
+  h.outcomes.gas = "timeout";
+  assert.equal((await h.request()).status, 503);
+  h.mine(h.sent[0]);
+  h.advance();
+  assert.equal((await h.request()).status, 200);
+  assert.deepEqual(h.sent.map((tx) => tx.purpose), ["gas", "usd"]);
+});
+
+test("a consumed sponsor nonce releases a missing transaction after balances refresh", async () => {
+  const h = sponsorHarness();
+  h.outcomes.gas = "timeout";
+  assert.equal((await h.request()).status, 503);
+  h.sent[0].dropped = true;
+  h.consumeNonce(h.sent[0].nonce);
+  h.advance();
+  h.outcomes.gas = "success";
+  assert.equal((await h.request()).status, 200);
+  assert.deepEqual(h.sent.map((tx) => tx.nonce), [0, 1, 2], "a consumed nonce must never be reused");
+  assert.equal(h.balance(ADDRESS).gas, parseEther("0.3"));
+});
+
+test("a missing hash with a higher pending nonce stays blocked regardless of elapsed time", async () => {
+  const h = sponsorHarness();
+  h.outcomes.gas = "timeout";
+  assert.equal((await h.request()).status, 503);
+  h.sent[0].dropped = true;
+  h.rpc.pendingNonce = h.sent[0].nonce + 1;
+  for (let i = 0; i < 100; i++) h.advance();
+  const response = await h.request(OTHER);
+  assert.equal(response.status, 503);
+  assert.equal((await response.json()).pending.hash, h.sent[0].hash);
+  assert.equal(h.sent.length, 1, "an unseen pending replacement must not cause a second payout");
+});
+
+for (const boundary of ["receiptError", "transactionError", "nonceError"]) {
+  test(`a ${boundary} RPC failure preserves the pending grant`, async () => {
+    const h = sponsorHarness();
+    h.outcomes.gas = "timeout";
+    assert.equal((await h.request()).status, 503);
+    h.sent[0].dropped = true;
+    h.rpc[boundary] = new Error("Synthetic RPC unavailable");
+    h.advance();
+    const response = await h.request(OTHER);
+    assert.equal(response.status, 503);
+    assert.equal((await response.json()).pending.hash, h.sent[0].hash);
+    assert.equal(h.sent.length, 1, "RPC errors are not proof that a transaction was dropped");
+  });
+}
 
 for (const purpose of ["gas", "usd"]) {
   test(`an already-funded account bypasses another account's uncertain ${purpose} receipt`, async () => {
@@ -232,7 +338,7 @@ test("the next primary-action click retries failed funding without an automatic 
 
 test("a funded action does not wait for a stalled optional sponsor request", { timeout: 1000 }, async () => {
   const render = providerHarness(() => new Promise(() => {}), {
-    getBalance: async () => parseEther("0.01"),
+    getBalance: async () => parseEther("0.06"),
     balanceOf: async () => parseUnits("10", 6),
   });
   const account = render();
@@ -266,10 +372,10 @@ test("successful sponsorship does not bypass missing on-chain balances", async (
   const render = providerHarness(async () => ({ ok: true, json: async () => ({ funded: { gas: true, usd: true } }) }));
   const account = render();
   await account.authorize();
-  await assert.rejects(account.whenFunded(ADDRESS), /no gas money/);
+  await assert.rejects(account.whenFunded(ADDRESS), /needs more gas money/);
 });
 
-test("an unlocked account that runs out of gas requests funding on its next action", async () => {
+test("an unlocked account below the gas floor requests funding on its next action", async () => {
   let gas = 0n;
   let attempts = 0;
   const render = providerHarness(async () => {
@@ -280,10 +386,23 @@ test("an unlocked account that runs out of gas requests funding on its next acti
   const account = render();
   await account.authorize();
   await account.whenFunded(ADDRESS);
-  gas = 0n;
+  for (const lowBalance of [0n, parseEther("0.01"), parseEther("0.059")]) {
+    gas = lowBalance;
+    await account.authorize();
+    await account.whenFunded(ADDRESS);
+    assert.equal(gas, parseEther("0.3"), "positive dust must request a top-up before continuing");
+  }
+  assert.equal(attempts, 4);
+});
+
+test("a positive balance below the gas floor does not continue after an ineffective grant", async () => {
+  const render = providerHarness(async () => ({ ok: true, json: async () => ({ funded: { gas: true, usd: true } }) }), {
+    getBalance: async () => parseEther("0.01"),
+    balanceOf: async () => parseUnits("1000", 6),
+  });
+  const account = render();
   await account.authorize();
-  await account.whenFunded(ADDRESS);
-  assert.equal(attempts, 2);
+  await assert.rejects(account.whenFunded(ADDRESS, parseUnits("10", 6)), /needs more gas money/);
 });
 
 test("locking while balances are read prevents the old action from continuing", async () => {

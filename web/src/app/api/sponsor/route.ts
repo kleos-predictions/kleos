@@ -7,12 +7,12 @@
 // per minute and per day. They're kept in memory, per server instance: enough for one demo
 // server. A deployment that runs several instances needs a shared store for them.
 
-import { createWalletClient, http, isAddress, parseEther, parseUnits, type Address, type Hex } from "viem";
+import { createWalletClient, http, isAddress, parseEther, parseUnits, TransactionNotFoundError, TransactionReceiptNotFoundError, type Address, type Hex } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { chain, publicClient, USD_ADDRESS } from "@/lib/chain";
 import { kleosUsdAbi } from "@/lib/abi";
+import { FUNDING_GAS_FLOOR } from "@/lib/funding";
 
-const GAS_FLOOR = parseEther("0.06"); // about two bets: below it, an account can't dispute or settle
 const GAS_TOP_UP = parseEther("0.3"); // ~10 bets, or settling a market of 11, at ~100 gwei (Monad charges the gas limit)
 const USD_FLOOR = parseUnits("50", 6);
 const USD_TOP_UP = parseUnits("1000", 6);
@@ -29,7 +29,7 @@ const lastFunded = new Map<string, number>(); // address → when funding starte
 const byIp = new Map<string, number[]>(); // ip → funding times in the last hour
 let recent: number[] = []; // all funding times in the last day
 let queue: Promise<unknown> = Promise.resolve(); // one funding at a time: no nonce races, no double pays
-type PendingFunding = { hash: Hex; purpose: "gas" | "usd" };
+type PendingFunding = { hash: Hex; purpose: "gas" | "usd"; sponsor: Address; recipient: Address; nonce: number };
 let pendingFunding: PendingFunding | undefined;
 
 const deny = (status: number, error: string) => Response.json({ error }, { status });
@@ -91,13 +91,25 @@ async function fund(key: Hex, address: Address, id: string, ip: string): Promise
   ]);
   let [gas, usd] = await readBalances();
   // An account that needs no funds must not depend on another recipient's pending transfer.
-  if (gas >= GAS_FLOOR && usd >= USD_FLOOR) return Response.json({ funded: { gas: false, usd: false } });
+  if (gas >= FUNDING_GAS_FLOOR && usd >= USD_FLOOR) return Response.json({ funded: { gas: false, usd: false } });
+
+  const account = privateKeyToAccount(key);
+  const sponsor = createWalletClient({ account, chain, transport: http() });
+  // Pin every grant to its nonce, including a retry of a dropped transaction. Even if the
+  // original later reappears, only one transfer with this nonce can execute.
+  const sendFunding = async (purpose: PendingFunding["purpose"], recipient: Address, nonce: number) => {
+    const hash = purpose === "gas"
+      ? await sponsor.sendTransaction({ to: recipient, value: GAS_TOP_UP, nonce })
+      : await sponsor.writeContract({ address: USD_ADDRESS!, abi: kleosUsdAbi, functionName: "sponsorMint", args: [recipient, USD_TOP_UP], nonce });
+    pendingFunding = { hash, purpose, sponsor: account.address, recipient, nonce };
+    return hash;
+  };
 
   // A timed-out receipt is not a failed transfer. Reconcile it before using this signer's
   // nonce again, including when the next request is for a different recipient.
   if (pendingFunding) {
     try {
-      await confirmFunding();
+      await reconcileFunding(account.address, sendFunding);
     } catch {
       return Response.json({
         funded: { gas: false, usd: false },
@@ -109,7 +121,7 @@ async function fund(key: Hex, address: Address, id: string, ip: string): Promise
     [gas, usd] = await readBalances();
   }
 
-  const needsGas = gas < GAS_FLOOR;
+  const needsGas = gas < FUNDING_GAS_FLOOR;
   const needsUsd = usd < USD_FLOOR;
   const now = Date.now();
   if (!needsGas && !needsUsd) return Response.json({ funded: { gas: false, usd: false } });
@@ -125,21 +137,20 @@ async function fund(key: Hex, address: Address, id: string, ip: string): Promise
   recent.push(now);
   byIp.get(ip)!.push(now);
 
-  const sponsor = createWalletClient({ account: privateKeyToAccount(key), chain, transport: http() });
   const hashes: Hex[] = [];
   const funded = { gas: false, usd: false };
   try {
     if (needsGas) {
-      const hash = await sponsor.sendTransaction({ to: address, value: GAS_TOP_UP });
+      const nonce = await publicClient.getTransactionCount({ address: account.address, blockTag: "pending" });
+      const hash = await sendFunding("gas", address, nonce);
       hashes.push(hash);
-      pendingFunding = { hash, purpose: "gas" };
       await confirmFunding();
       funded.gas = true;
     }
     if (needsUsd) {
-      const hash = await sponsor.writeContract({ address: USD_ADDRESS!, abi: kleosUsdAbi, functionName: "sponsorMint", args: [address, USD_TOP_UP] });
+      const nonce = await publicClient.getTransactionCount({ address: account.address, blockTag: "pending" });
+      const hash = await sendFunding("usd", address, nonce);
       hashes.push(hash);
-      pendingFunding = { hash, purpose: "usd" };
       await confirmFunding();
       funded.usd = true;
     }
@@ -155,6 +166,45 @@ async function fund(key: Hex, address: Address, id: string, ip: string): Promise
         : "Test funding could not be confirmed. Check any submitted transaction before trying again.",
     }, { status: 503 });
   }
+}
+
+async function reconcileFunding(
+  sponsor: Address,
+  resend: (purpose: PendingFunding["purpose"], recipient: Address, nonce: number) => Promise<Hex>,
+) {
+  const pending = pendingFunding!;
+  const receipt = await publicClient.getTransactionReceipt({ hash: pending.hash }).catch((error: unknown) => {
+    if (error instanceof TransactionReceiptNotFoundError) return null;
+    throw error;
+  });
+  if (receipt) {
+    pendingFunding = undefined;
+    if (receipt.status !== "success") throw new Error("Funding transaction did not succeed.");
+    return;
+  }
+  const transaction = await publicClient.getTransaction({ hash: pending.hash }).catch((error: unknown) => {
+    if (error instanceof TransactionNotFoundError) return null;
+    throw error;
+  });
+  const [confirmedNonce, pendingNonce] = await Promise.all([
+    publicClient.getTransactionCount({ address: pending.sponsor, blockTag: "latest" }),
+    publicClient.getTransactionCount({ address: pending.sponsor, blockTag: "pending" }),
+  ]);
+  if (confirmedNonce > pending.nonce) {
+    // This nonce was mined, possibly as a replacement whose hash we never observed.
+    // It cannot execute again; fund() re-reads the recipient's balances before any new grant.
+    pendingFunding = undefined;
+    return;
+  }
+  if (!transaction) {
+    // A missing hash alone is inconclusive. Retry the original grant only when this nonce
+    // is still next for both chain and mempool, and the signer has not changed.
+    if (confirmedNonce !== pending.nonce || pendingNonce !== pending.nonce || sponsor !== pending.sponsor) {
+      throw new Error("Funding transaction is still unresolved.");
+    }
+    await resend(pending.purpose, pending.recipient, pending.nonce);
+  }
+  await confirmFunding();
 }
 
 async function confirmFunding() {

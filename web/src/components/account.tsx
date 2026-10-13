@@ -6,6 +6,7 @@ import { toViemAccount } from "@category-labs/mera/viem";
 import type { PasskeyCredentialMetadata } from "@category-labs/mera";
 import { chain, POLLING_MS, publicClient, USD_ADDRESS } from "@/lib/chain";
 import { kleosUsdAbi } from "@/lib/abi";
+import { FUNDING_GAS_FLOOR } from "@/lib/funding";
 import { createAccount, describeAccountError, unlockAccount, type UnlockedAccount } from "@/lib/mera";
 
 // Session design:
@@ -210,9 +211,9 @@ export function AccountProvider({ children }: { children: React.ReactNode }) {
       assertCurrent();
       return { gas, tokens };
     };
-    // The faucet's grant thresholds are not transaction requirements. The wallet estimates
-    // the actual gas cost; token-free actions need no kUSD and small bets need only their stake.
-    const sufficient = (funds: { gas: bigint; tokens: bigint }) => funds.gas > 0n && funds.tokens >= usd;
+    // A positive dust balance cannot pay for a typical action. Use the sponsor's gas floor,
+    // while token-free actions need no kUSD and small bets need only their stake.
+    const sufficient = (funds: { gas: bigint; tokens: bigint }) => funds.gas >= FUNDING_GAS_FLOOR && funds.tokens >= usd;
     if (sufficient(await readFunds())) return;
 
     let fundingError: unknown;
@@ -226,8 +227,8 @@ export function AccountProvider({ children }: { children: React.ReactNode }) {
     const funds = await readFunds();
     if (sufficient(funds)) return; // A partial grant or manual deposit may be enough for this action.
     if (fundingError) throw fundingError;
-    throw new Error(funds.gas === 0n
-      ? "Your account has no gas money. Request test funds or fund it with MON."
+    throw new Error(funds.gas < FUNDING_GAS_FLOOR
+      ? "Your account needs more gas money. Request test funds or fund it with MON."
       : "Not enough test USD for this action. Try a smaller amount or request funds.");
   }, [requestFunds]);
 

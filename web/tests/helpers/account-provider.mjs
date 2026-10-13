@@ -40,6 +40,7 @@ export function providerHarness(response, { address = "0x11111111111111111111111
     "@category-labs/mera/viem": { toViemAccount: () => ({ address: address }) },
     "@/lib/chain": { chain: {}, POLLING_MS: 4000, USD_ADDRESS: address, publicClient: { getBalance, readContract: balanceOf } },
     "@/lib/abi": { kleosUsdAbi: [] },
+    "@/lib/funding": load("lib/funding.ts", {}, {}),
     "@/lib/mera": {
       createAccount: async () => ({ address, credential: { credentialId: "fake-passkey" }, session: { end() {} } }),
       unlockAccount: async () => ({ address, credential: { credentialId: "fake-passkey" }, session: { end() {} } }),
