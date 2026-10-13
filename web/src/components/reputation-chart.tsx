@@ -36,6 +36,17 @@ export function ReputationChart({ points, height = 240 }: { points: { t: number;
   const xTicks = months.length >= 2 ? months : [{ t: t0, label: DAY.format(new Date(t0 * 1000)) }, { t: t1, label: DAY.format(new Date(t1 * 1000)) }];
 
   const tiers = TIER_THRESHOLDS.map((r, i) => ({ r, name: TIER_NAMES[i + 1] })).filter((t) => t.r <= yMax);
+  // Low tiers crowd together when R is high: label a tier only if it clears the 0 label and the
+  // labels above it. Its dashed line is always drawn.
+  const LABEL_GAP = 14;
+  const labelled = new Set<number>();
+  const taken = [y(0)];
+  for (const t of [...tiers].sort((a, b) => b.r - a.r)) {
+    if (taken.every((ty) => Math.abs(ty - y(t.r)) >= LABEL_GAP)) {
+      labelled.add(t.r);
+      taken.push(y(t.r));
+    }
+  }
   const last = points[points.length - 1];
 
   return (
@@ -49,9 +60,11 @@ export function ReputationChart({ points, height = 240 }: { points: { t: number;
       {tiers.map((t) => (
         <g key={t.r}>
           <line x1={PAD.l} x2={W - PAD.r} y1={y(t.r)} y2={y(t.r)} stroke="var(--color-line)" strokeDasharray="2 6" />
-          <text x={PAD.l - 10} y={y(t.r) + 4} textAnchor="end" fontSize={11} fill="var(--color-muted)" fontFamily="var(--font-mono)">
-            {t.r} · {t.name}
-          </text>
+          {labelled.has(t.r) && (
+            <text x={PAD.l - 10} y={y(t.r) + 4} textAnchor="end" fontSize={11} fill="var(--color-muted)" fontFamily="var(--font-mono)">
+              {t.r} · {t.name}
+            </text>
+          )}
         </g>
       ))}
       <line x1={PAD.l} x2={W - PAD.r} y1={y(0)} y2={y(0)} stroke="var(--color-line-strong)" />
