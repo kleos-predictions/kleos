@@ -35,6 +35,7 @@ chains:
     - event: MarketVoided(uint256 indexed marketId)
     - event: OutcomeDisputed(uint256 indexed marketId, address indexed disputer)
     - event: OutcomeProposed(uint256 indexed marketId, address indexed proposer, bool outcome, bytes32 evidenceHash, string evidenceURI)
+    - event: OwnershipTransferred(address indexed previousOwner, address indexed newOwner)
     - event: RevenueAccrued(uint256 indexed marketId, uint256 amount)
     - event: RevenueWithdrawn(address indexed to, uint256 amount)
     - event: ReputationChanged(address indexed user, uint256 indexed marketId, int256 delta, uint256 newR, uint256 pendingR, uint256 entryPrice, bool side, bool outcome)

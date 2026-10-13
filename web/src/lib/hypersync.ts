@@ -31,18 +31,25 @@ export async function hypersyncEvents<const TAbi extends Abi, TName extends Cont
   eventName: TName;
   args?: Record<string, unknown>;
   fromBlock: bigint;
+  toBlock?: bigint;
 }): Promise<SyncedLog<TArgs>[]> {
   const topics = encodeEventTopics({ abi: opts.abi, eventName: opts.eventName, args: opts.args } as never) as (Hex | Hex[] | null)[];
   const filter = topics.map((t) => (t === null ? [] : Array.isArray(t) ? t : [t]));
   const out: SyncedLog<TArgs>[] = [];
   let from = Number(opts.fromBlock);
+  const to = opts.toBlock === undefined ? undefined : Number(opts.toBlock + 1n); // API upper bound is exclusive.
+  const deadline = Date.now() + 20_000;
+  let pages = 0;
+  if (!Number.isSafeInteger(from) || (to !== undefined && !Number.isSafeInteger(to))) throw new Error("Unsupported history block range.");
 
   for (;;) {
+    if (++pages > 100 || Date.now() >= deadline) throw new Error("HyperSync history exceeded its read budget.");
     const res = await fetch(`${URL}/query`, {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${TOKEN}` },
       body: JSON.stringify({
         from_block: from,
+        ...(to === undefined ? {} : { to_block: to }),
         logs: [{ address: [opts.address], topics: filter }],
         field_selection: {
           log: ["block_number", "log_index", "transaction_hash", "data", "topic0", "topic1", "topic2", "topic3"],
@@ -50,6 +57,7 @@ export async function hypersyncEvents<const TAbi extends Abi, TName extends Cont
         },
       }),
       cache: "no-store",
+      signal: AbortSignal.timeout(Math.max(1, deadline - Date.now())),
     });
     if (!res.ok) throw new Error(`HyperSync ${res.status}`);
     const page = (await res.json()) as Page;
@@ -60,16 +68,25 @@ export async function hypersyncEvents<const TAbi extends Abi, TName extends Cont
       for (const log of b.logs ?? []) {
         const logTopics = [log.topic0, log.topic1, log.topic2, log.topic3].filter(Boolean) as [Hex, ...Hex[]];
         const decoded = decodeEventLog({ abi: opts.abi, data: log.data, topics: logTopics });
+        if (to !== undefined && log.block_number >= to) continue;
+        const timestamp = times.get(Number(log.block_number));
+        if (timestamp === undefined || timestamp <= 0) throw new Error("HyperSync returned a log without its block timestamp.");
         out.push({
           args: decoded.args as TArgs,
           blockNumber: BigInt(log.block_number),
           logIndex: log.log_index,
           transactionHash: log.transaction_hash,
-          timestamp: times.get(Number(log.block_number)) ?? 0,
+          timestamp,
         });
       }
     }
-    if (page.next_block >= page.archive_height || page.next_block <= from) break;
+    if (out.length > 10_000) throw new Error("HyperSync history exceeded its row budget.");
+    if (!Number.isSafeInteger(page.next_block) || page.next_block <= from) throw new Error("HyperSync pagination did not advance.");
+    if (to !== undefined && page.next_block >= to) break;
+    if (page.next_block >= page.archive_height) {
+      if (to !== undefined && page.next_block < to) throw new Error("HyperSync has not indexed the requested snapshot block yet.");
+      break;
+    }
     from = page.next_block;
   }
   return out;

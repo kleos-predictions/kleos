@@ -32,14 +32,17 @@ export type Market = {
   repYes: number;
   moneyYes: number;
   history: PricePoint[];
+  historyCoverage?: string; // indexed history may be bounded or incomplete
   proposed?: { outcome: boolean; finalIn: string };
   stage: number; // index into RESOLUTION_STAGES
   sharps: { yes: number; no: number }; // bettors with R ≥ SHARP_R, by side
+  live?: { block: string; chainId: number; contract: string; closeTime: number; state: number; sharpsAvailable: boolean; voided?: boolean; outcome?: boolean; creatorBond?: string; yesMoney: string; noMoney: string; yesEff: string; noEff: string };
 };
 
-export type Bet = { address: string; side: boolean; amount: number; mult: number; r: number; ago: string };
+export type Bet = { address: string; side: boolean; amount: number; mult: number; r?: number; rawR?: string; effective?: number; ago: string };
 
 export type RepChange = {
+  kind?: "bet" | "jury" | "admin" | "vest";
   marketId: number;
   question: string;
   side: boolean;
@@ -49,6 +52,8 @@ export type RepChange = {
   delta: number;
   newR: number;
   tx: string;
+  logIndex?: number;
+  blockNumber?: string;
   date: string;
   timestamp: number; // seconds
   isBet?: boolean; // false for demo seeds and jury duty
@@ -292,6 +297,10 @@ export function traderTier(t: Trader) {
 
 /** Pool sizes implied by the displayed prices (effective pool runs ~1.6× the money pool). */
 export function pools(m: Market) {
+  if (m.live) return {
+    yesMoney: Number(m.live.yesMoney) / 1e6, noMoney: Number(m.live.noMoney) / 1e6,
+    yesEff: Number(m.live.yesEff) / 1e6, noEff: Number(m.live.noEff) / 1e6,
+  };
   const effTotal = m.volume * 1.6;
   return {
     yesMoney: m.volume * m.moneyYes,
@@ -304,7 +313,7 @@ export function pools(m: Market) {
 /** Reputation used for the connected wallet in demo mode (R = 16 → 3× boost). */
 export const DEMO_R = 16;
 
-export type Call = { id: number; address: string; name?: string; r: number; side: boolean; amount: number; entryPrice: number; text: string; ago: string };
+export type Call = { rawR?: string; rBlock?: string; id: number; address: string; name?: string; r: number; side: boolean; amount: number; entryPrice: number; text: string; ago: string };
 
 const SAMPLE_CALLS: Record<number, string[]> = {
   1: ["ETF inflows haven't slowed in six weeks", "Halving supply shock is priced in already", "Funding rates say leverage is too crowded"],

@@ -9,7 +9,7 @@ export function CallsList({ calls }: { calls: Call[] }) {
     <section className="card flex flex-col gap-4 p-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <span className="lbl">Calls</span>
-        <span className="lbl">Public · permanent · written before the outcome</span>
+        <span className="lbl">Public · permanent · current R badges</span>
       </div>
       {calls.length === 0 ? (
         <p className="lbl py-6 text-center">No calls yet. Add one when you bet.</p>
@@ -18,7 +18,7 @@ export function CallsList({ calls }: { calls: Call[] }) {
           {calls.map((c, i) => (
             <li key={i} className="flex flex-col gap-2 py-4">
               <div className="flex flex-wrap items-center gap-x-3 gap-y-1 font-mono text-sm">
-                <LaurelBadge r={c.r} size={20} />
+                <LaurelBadge r={c.r} rawR={c.rawR} size={20} />
                 <Link href={`/profile/${c.address}`} className="text-ink">
                   {c.name ? `@${c.name}` : shortAddress(c.address)}
                 </Link>

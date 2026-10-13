@@ -1,7 +1,7 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { network } from "hardhat";
-import { keccak256, maxUint256, parseEther, parseUnits, toHex, type Address } from "viem";
+import { keccak256, maxUint256, parseEther, parseUnits, toHex, zeroAddress, zeroHash, getAddress, type Address } from "viem";
 
 const { viem, networkHelpers } = await network.create();
 
@@ -222,6 +222,71 @@ describe("reputation update", () => {
     assert.equal(r.pending, 0n);
   });
 
+  async function twoWins(flagged = false) {
+    const ctx = await deploy();
+    const user = ctx.wallets[12];
+    await ctx.kleos.write.createMarket(["Second objective result", 1, "Official result", "YES if the result is positive", ctx.closeTime]);
+    await crowdAt(ctx, flagged ? 5 : 30);
+    for (const [i, w] of ctx.wallets.slice(1, 11).entries()) {
+      await ctx.kleos.write.bet([2n, i < 5, usd(i < 5 ? 60 : 140)], { account: w.account });
+    }
+    await ctx.kleos.write.bet([1n, true, usd(50)], { account: user.account });
+    await ctx.kleos.write.bet([2n, true, usd(50)], { account: user.account });
+    await ctx.resolve(true);
+    await ctx.kleos.write.propose([2n, true, EVIDENCE, "https://example.com/second"], { account: ctx.resolver.account });
+    await networkHelpers.time.increase(DISPUTE_WINDOW);
+    await ctx.kleos.write.finalize([2n]);
+    await ctx.kleos.write.settle([1n, [user.account.address]]);
+    return { ctx, user };
+  }
+
+  it("a new gain preserves an already matured pending balance", async () => {
+    const { ctx, user } = await twoWins();
+    const before = await rep(ctx, user.account.address);
+    assert.equal(before.pending, wad(0.7));
+    await networkHelpers.time.increaseTo(before.vestAt);
+    await ctx.kleos.write.settle([2n, [user.account.address]]);
+    const after = await rep(ctx, user.account.address);
+    assert.equal(after.r, wad(0.7), "old gain is vested before the new gain is added");
+    assert.equal(after.pending, wad(0.7), "only the new gain waits");
+    assert.equal(after.vestAt, BigInt(await networkHelpers.time.latest()) + VEST_PERIOD);
+  });
+
+  it("a new gain cannot prematurely release immature pending reputation", async () => {
+    const { ctx, user } = await twoWins();
+    await ctx.kleos.write.settle([2n, [user.account.address]]);
+    const after = await rep(ctx, user.account.address);
+    assert.equal(after.r, 0n);
+    assert.equal(after.pending, wad(1.4));
+    await assert.rejects(ctx.kleos.write.vest([user.account.address]), /StillVesting/);
+  });
+
+  it("automatic maturation cannot bypass a flagged balance", async () => {
+    const { ctx, user } = await twoWins(true);
+    const before = await rep(ctx, user.account.address);
+    assert.equal(before.flagged, true);
+    await networkHelpers.time.increaseTo(before.vestAt);
+    await ctx.kleos.write.settle([2n, [user.account.address]]);
+    const after = await rep(ctx, user.account.address);
+    assert.equal(after.r, 0n);
+    assert.equal(after.pending, wad(1.5));
+    assert.equal(after.flagged, true);
+    await networkHelpers.time.increase(VEST_PERIOD);
+    await assert.rejects(ctx.kleos.write.vest([user.account.address]), /UnderReview/);
+  });
+
+  it("the activation counter saturates without blocking principal settlement", async () => {
+    const ctx = await deploy();
+    await crowdAt(ctx, 50);
+    const user = ctx.wallets[12];
+    await ctx.kleos.write.seedReputation([user.account.address, wad(1), 4294967295]);
+    await ctx.kleos.write.bet([1n, true, usd(50)], { account: user.account });
+    await ctx.resolve(true);
+    await ctx.kleos.write.settle([1n, [user.account.address]]);
+    assert.equal((await rep(ctx, user.account.address)).resolvedBets, 4294967295);
+    assert.equal(await ctx.kleos.read.settled([1n, user.account.address]), true);
+  });
+
   it("losses beyond R come out of pending gains", async () => {
     const ctx = await deploy();
     await crowdAt(ctx, 30);
@@ -395,22 +460,22 @@ describe("Kleos Court", () => {
   }
 
   /** Runs one round: each drawn juror votes per `plan` (null = no-show), then the round is closed. */
-  async function runRound(ctx: Ctx, plan: (i: number) => Vote | null) {
-    const court = await ctx.kleos.read.getCourt([1n]);
-    const jury = await ctx.kleos.read.getJury([1n, court.round]);
+  async function runRound(ctx: Ctx, plan: (i: number) => Vote | null, id = 1n) {
+    const court = await ctx.kleos.read.getCourt([id]);
+    const jury = await ctx.kleos.read.getJury([id, court.round]);
     const byAddress = new Map(ctx.wallets.map((w) => [w.account.address.toLowerCase(), w]));
     const cast = jury.map((j, i) => ({ w: byAddress.get(j.toLowerCase())!, vote: plan(i), salt: keccak256(toHex(`salt-${court.round}-${i}`)) }));
     for (const { w, vote, salt } of cast) {
       if (!vote) continue;
-      const c = await ctx.kleos.read.voteCommitment([1n, court.round, w.account.address, VOTE[vote], salt]);
-      await ctx.kleos.write.commitVote([1n, c], { account: w.account });
+      const c = await ctx.kleos.read.voteCommitment([id, court.round, w.account.address, VOTE[vote], salt]);
+      await ctx.kleos.write.commitVote([id, c], { account: w.account });
     }
     await networkHelpers.time.increaseTo(court.commitEnd);
     for (const { w, vote, salt } of cast) {
-      if (vote) await ctx.kleos.write.revealVote([1n, VOTE[vote], salt], { account: w.account });
+      if (vote) await ctx.kleos.write.revealVote([id, VOTE[vote], salt], { account: w.account });
     }
     if (cast.some((c) => !c.vote)) await networkHelpers.time.increaseTo(court.revealEnd);
-    await ctx.kleos.write.closeCourt([1n]);
+    await ctx.kleos.write.closeCourt([id]);
     return cast.map((c) => c.w.account.address);
   }
 
@@ -419,6 +484,42 @@ describe("Kleos Court", () => {
     const jury = await ctx.kleos.read.getJury([1n, 1]);
     assert.equal(jury.length, 5);
     await assert.rejects(ctx.kleos.write.dispute([1n], { account: ctx.wallets[4].account }), /BadState/);
+  });
+
+  it("an empty commitment cannot erase an existing jury commitment", async () => {
+    const { ctx } = await disputed();
+    const [juror] = await ctx.kleos.read.getJury([1n, 1]);
+    const wallet = ctx.wallets.find((w) => w.account.address.toLowerCase() === juror.toLowerCase())!;
+    await assert.rejects(ctx.kleos.write.commitVote([1n, zeroHash], { account: wallet.account }), /BadVote/);
+    const salt = keccak256(toHex("ordinary valid jury commitment"));
+    const commitment = await ctx.kleos.read.voteCommitment([1n, 1, juror, 1, salt]);
+    await ctx.kleos.write.commitVote([1n, commitment], { account: wallet.account });
+    await assert.rejects(ctx.kleos.write.commitVote([1n, zeroHash], { account: wallet.account }), /BadVote/);
+    assert.equal(await ctx.kleos.read.commitments([1n, 1, juror]), commitment);
+    await networkHelpers.time.increaseTo((await ctx.kleos.read.getCourt([1n])).commitEnd);
+    await ctx.kleos.write.revealVote([1n, 1, salt], { account: wallet.account });
+    assert.equal(await ctx.kleos.read.votes([1n, 1, juror]), 1);
+  });
+
+  it("a new jury reward vests a previous matured reward first", async () => {
+    const { ctx } = await disputed();
+    const firstJury = await runRound(ctx, () => "no");
+    const selected = new Set(firstJury.map((a) => a.toLowerCase()));
+    for (const w of ctx.wallets.slice(18, 28)) {
+      if (!selected.has(w.account.address.toLowerCase())) await ctx.kleos.write.leaveCourt({ account: w.account });
+    }
+    const close = BigInt(await networkHelpers.time.latest()) + VEST_PERIOD + 60n;
+    await ctx.kleos.write.createMarket(["Second court case", 1, "Official record", "YES if the record says yes", close]);
+    await networkHelpers.time.increaseTo(close);
+    await ctx.kleos.write.propose([2n, false, EVIDENCE, "https://example.com/second-case"], { account: ctx.resolver.account });
+    await ctx.kleos.write.dispute([2n], { account: ctx.wallets[3].account });
+    const secondJury = await runRound(ctx, () => "no", 2n);
+    assert.equal(secondJury.length, 5);
+    for (const a of secondJury) {
+      const r = await rep(ctx, a);
+      assert.equal(r.r, wad(40.3), "the original reward is mature");
+      assert.equal(r.pending, wad(0.3), "the new court reward still vests");
+    }
   });
 
   it("only tier V can join the jury pool", async () => {
@@ -565,6 +666,51 @@ describe("KleosSocial names", () => {
 });
 
 describe("market creation", () => {
+  it("rejects each empty immutable field without creating a market or charging its creator", async () => {
+    const ctx = await deploy();
+    const creator = ctx.wallets[2];
+    await ctx.kleos.write.seedReputation([creator.account.address, wad(40), N_MIN]);
+    const before = await ctx.token.read.balanceOf([creator.account.address]);
+    const cases: [string, number, string, string, bigint][] = [
+      ["", 1, "Official record", "YES if the record says yes", ctx.closeTime],
+      ["An objective question?", 1, "", "YES if the record says yes", ctx.closeTime],
+      ["An objective question?", 1, "Official record", "", ctx.closeTime],
+    ];
+    for (const args of cases) {
+      await assert.rejects(ctx.kleos.write.createMarket(args, { account: creator.account }), /BadMarketText/);
+    }
+    assert.equal(await ctx.kleos.read.marketCount(), 1n);
+    assert.equal(await ctx.token.read.balanceOf([creator.account.address]), before);
+    assert.equal(await ctx.kleos.read.protocolRevenue(), 0n);
+  });
+
+  it("rejects ASCII whitespace-only question, source, and criteria", async () => {
+    const ctx = await deploy();
+    for (const whitespace of [" ", "\t", "\n", "\r", "\v", "\f", " \t\n\r\v\f "]) {
+      const cases: [string, number, string, string, bigint][] = [
+        [whitespace, 1, "Official record", "YES if the record says yes", ctx.closeTime],
+        ["An objective question?", 1, whitespace, "YES if the record says yes", ctx.closeTime],
+        ["An objective question?", 1, "Official record", whitespace, ctx.closeTime],
+      ];
+      for (const args of cases) await assert.rejects(ctx.kleos.write.createMarket(args), /BadMarketText/);
+    }
+    assert.equal(await ctx.kleos.read.marketCount(), 1n);
+  });
+
+  it("preserves valid immutable text including Unicode and surrounding whitespace", async () => {
+    const ctx = await deploy();
+    const question = "\tWill São Paulo report rain?\n";
+    const oracle = "\rOfficial weather record ";
+    const criteria = "\nYES if the record reports rain; otherwise NO.\t";
+    await ctx.kleos.write.createMarket([question, 4, oracle, criteria, ctx.closeTime]);
+    const market = await ctx.kleos.read.getMarket([2n]);
+    assert.equal(market.question, question);
+    assert.equal(market.oracle, oracle);
+    assert.equal(market.criteria, criteria);
+    assert.equal(market.category, 4);
+    assert.equal(market.closeTime, ctx.closeTime);
+  });
+
   it("tier V creates with a $25 bond and a $2 fee; the team creates for free", async () => {
     const ctx = await deploy();
     const [trader, creator] = [ctx.wallets[1], ctx.wallets[2]];
@@ -680,7 +826,7 @@ describe("review fixes (pre-deploy)", () => {
     await networkHelpers.time.increaseTo(ctx.closeTime);
     await assert.rejects(ctx.kleos.write.expire([1n]), /NotExpired/);
     await networkHelpers.time.increase(20n * DISPUTE_WINDOW);
-    const before = await ctx.token.read.balanceOf([ctx.wallets[3].account.address]);
+    const before = await ctx.token.read.balanceOf([getAddress(ctx.wallets[3].account.address)]);
     await ctx.kleos.write.expire([1n]);
     await ctx.settleAll();
     assert.equal((await ctx.token.read.balanceOf([ctx.wallets[3].account.address])) - before, usd(10));
@@ -758,5 +904,40 @@ describe("review fixes (pre-deploy)", () => {
     await ctx.kleos.write.slash([j.account.address, wad(10)]);
     await ctx.kleos.write.pruneJuror([j.account.address], { account: ctx.wallets[5].account });
     assert.equal((await ctx.kleos.read.jurorPool()).length, 0);
+  });
+});
+
+describe("constructor configuration", () => {
+  it("rejects a zero collateral token", async () => {
+    await assert.rejects(viem.deployContract("Kleos", [zeroAddress, DISPUTE_WINDOW, VEST_PERIOD, BigInt(N_MIN), COURT_PERIOD]), /ZeroAddress/);
+  });
+});
+
+describe("bounded discovery", () => {
+  it("pages bettors in insertion order without duplicating repeated bettors", async () => {
+    const ctx = await deploy();
+    for (const w of ctx.wallets.slice(1, 4)) await ctx.kleos.write.bet([1n, true, usd(10)], { account: w.account });
+    await ctx.kleos.write.bet([1n, false, usd(10)], { account: ctx.wallets[1].account });
+    assert.equal(await ctx.kleos.read.bettorCount([1n]), 3n);
+    assert.deepEqual(await ctx.kleos.read.getBettorsPage([1n, 0n, 2n]), ctx.wallets.slice(1, 3).map(w => getAddress(w.account.address)));
+    assert.deepEqual(await ctx.kleos.read.getBettorsPage([1n, 2n, 2n]), [getAddress(ctx.wallets[3].account.address)]);
+    assert.deepEqual(await ctx.kleos.read.getBettorsPage([1n, maxUint256, 100n]), []);
+    assert.deepEqual(await ctx.kleos.read.getBettorsPage([2n, 0n, 100n]), []);
+    await assert.rejects(ctx.kleos.read.getBettorsPage([1n, 0n, 0n]), /BadPagination/);
+    await assert.rejects(ctx.kleos.read.getBettorsPage([1n, 0n, 101n]), /BadPagination/);
+  });
+  it("pages the current juror pool after a member leaves", async () => {
+    const ctx = await deploy();
+    for (const w of ctx.wallets.slice(18, 21)) {
+      await ctx.kleos.write.seedReputation([w.account.address, wad(40), N_MIN]);
+      await ctx.kleos.write.joinCourt({ account: w.account });
+    }
+    assert.equal(await ctx.kleos.read.jurorCount(), 3n);
+    await ctx.kleos.write.leaveCourt({ account: ctx.wallets[19].account });
+    assert.equal(await ctx.kleos.read.jurorCount(), 2n);
+    assert.deepEqual(await ctx.kleos.read.jurorPoolPage([0n, 1n]), [getAddress(ctx.wallets[18].account.address)]);
+    assert.deepEqual(await ctx.kleos.read.jurorPoolPage([1n, 100n]), [getAddress(ctx.wallets[20].account.address)]);
+    assert.deepEqual(await ctx.kleos.read.jurorPoolPage([2n, 100n]), []);
+    await assert.rejects(ctx.kleos.read.jurorPoolPage([0n, 101n]), /BadPagination/);
   });
 });

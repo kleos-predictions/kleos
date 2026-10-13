@@ -54,7 +54,10 @@ describe("markets", () => {
     ]);
 
     // Calls are keyed by the contract's callId, the same number KleosSocial votes use.
-    t.expect(await indexer.Call.getOrThrow("1")).toMatchObject({ text: "ETF flows", result: "Right", txHash: hash });
+    t.expect(await indexer.Call.getOrThrow("1")).toMatchObject({
+      text: "ETF flows", result: "Right", txHash: hash,
+      blockNumber: 4, logIndex: 1, contractAddress: KLEOS.toLowerCase(),
+    });
     t.expect((await indexer.Call.getOrThrow("2")).result).toBe("Wrong");
     t.expect((await indexer.Call.getOrThrow("3")).result).toBe("Refunded");
 
@@ -219,7 +222,7 @@ describe("reputation", () => {
       marketResolved(true, 80, 0n, 1n), marketResolved(true, 81, 0n, 2n), marketResolved(true, 82, 0n, 3n), marketVoided(83, 4n),
       settled(me, 90, 0, usd(196), 1n), settled(me, 91, 0, 0n, 2n), settled(me, 92, 0, 0n, 3n), settled(me, 93, 0, usd(100), 4n),
     ]);
-    t.expect((await indexer.Trader.getOrThrow(me.toLowerCase())).resolvedBets).toBe(1);
+    t.expect((await indexer.Trader.getOrThrow(me.toLowerCase())).resolvedBets).toBe(1n);
     t.expect(await indexer.Position.getOrThrow(positionId(1n, me))).toMatchObject({ settled: true, payout: usd(196) });
   });
 
@@ -238,7 +241,7 @@ describe("reputation", () => {
       settled(small, 31, 0), settled(hedged, 31, 1), settled(full, 31, 2),
     ]);
     const counted = async (a: string) => (await indexer.Trader.getOrThrow(a.toLowerCase())).resolvedBets;
-    t.expect([await counted(small), await counted(hedged), await counted(full)]).toEqual([0, 1, 1]);
+    t.expect([await counted(small), await counted(hedged), await counted(full)]).toEqual([0n, 1n, 1n]);
   });
 
   it("an admin slash is recorded on the trader, and its ReputationChanged sets R", async (t) => {
@@ -468,5 +471,17 @@ describe("social", () => {
     t.expect((await indexer.CallVote.getAll()).map((v) => [v.voter_id, v.value])).toEqual([[carol.toLowerCase(), -1]]);
     // The pending tally is consumed once the call is posted.
     t.expect(await indexer.PendingCallTally.get("1")).toBeUndefined();
+  });
+
+  it("clearing every pre-call vote removes the empty tally and later votes start clean", async (t) => {
+    const indexer = createTestIndexer();
+    await run(indexer, [
+      social("CallVoted", 1, { callId: 999n, voter: alice, vote: 1n }),
+      social("CallVoted", 2, { callId: 999n, voter: alice, vote: 0n }),
+    ]);
+    t.expect(await indexer.PendingCallTally.get("999")).toBeUndefined();
+    t.expect(await indexer.CallVote.getAll()).toHaveLength(0);
+    await run(indexer, [social("CallVoted", 3, { callId: 999n, voter: bob, vote: -1n })]);
+    t.expect(await indexer.PendingCallTally.getOrThrow("999")).toMatchObject({ ups: 0, downs: 1 });
   });
 });

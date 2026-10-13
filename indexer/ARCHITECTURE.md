@@ -2,6 +2,10 @@
 
 How contract events become the data the app reads. Solid lines are built; dashed lines are planned.
 
+Audit update, 2026-10-02: `BonusClaim`, `Vesting`, `Slash`, `OwnershipChange` and `ContractConfiguration` are now built. Claim state includes zero/non-position claims. Seed/reseed counts and current commitments use validated direct transaction input; omitted nested input is nullable unknown with provenance. Vest deadlines use recovered constructor parameters or the verified immutable snapshot for the exact deployed testnet address. Both integration suites pin comparisons to their indexed end block and count skipped fields. The historical diagrams below show the original core layout; current field details are in `schema.graphql`.
+
+Main re-evaluation, `83e7909`: the combined candidate retains `PendingCallTally` for votes preceding a call and main's batched jury reads. Calls now carry numeric block/log positions and contract source, with matching history indexes. Envio's built-in `_meta.progressBlock` is the processing checkpoint; the maximum event block does not prove processing through quiet blocks. The adapter must validate checkpoint chain, replay start, readiness and freshness in the same operation as its data, and pin exact contract comparisons to that block. The candidate passes 36 simulated tests and actual isolated local handler replay at block 517, including a successful three-seat court, 11 bonus claims and 6 vest transitions. Hosted GraphQL acceptance remains open; the existing Cloud deployment remains its recorded historical schema.
+
 ## 1. The big picture
 
 ```mermaid
@@ -49,7 +53,7 @@ flowchart LR
 
 Both configs list the same contracts and events. Only the chain, the addresses and the data source differ. Envio Cloud runs `config.testnet.yaml`.
 
-Pages pick the first source that's configured: indexer, then RPC, then sample data. Only the indexer path is new. The other two keep working throughout.
+In live mode, pages prefer a validated indexer snapshot and fall back to bounded contract reads. Failure shows unavailable data. Samples are used only without configured contracts in demo mode.
 
 Testnet is read through HyperSync. Envio Cloud gives hosted indexers HyperSync access without a token. Running the testnet config locally needs `ENVIO_API_TOKEN` in `indexer/.env`. The start block is 67114786, where KleosSocial was deployed; Kleos followed in 67114811.
 
@@ -184,7 +188,7 @@ flowchart LR
 
 KleosSocial doesn't check that a call exists, so a vote can arrive before its `CallPosted`. The `CallPosted` handler counts the votes already stored. Social data never touches money or reputation.
 
-Not indexed on purpose: `OwnershipTransferred`. Nothing in the app shows the owner.
+`OwnershipTransferred` is now indexed, because the owner affects eligibility exceptions even when no screen displays it.
 
 ## 4. The entities
 

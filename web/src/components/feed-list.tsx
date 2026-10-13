@@ -1,28 +1,53 @@
 "use client";
 
 import Link from "next/link";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useReadContract } from "wagmi";
-import { zeroAddress } from "viem";
+import { decodeFunctionData, encodeFunctionData, zeroAddress } from "viem";
 import type { FeedItem } from "@/lib/data";
 import { SHARP_R } from "@/lib/data";
 import { SOCIAL_ADDRESS, chain, publicClient, shortAddress } from "@/lib/chain";
 import { kleosSocialAbi } from "@/lib/abi";
-import { tierOf, TIER_NAMES } from "@/lib/tiers";
+import { tierOf, tierOfWad, TIER_NAMES } from "@/lib/tiers";
 import { useKleosAccount } from "./account";
 import { LaurelBadge } from "./laurel";
+import { PendingTransactionNotice, usePendingTransaction } from "./pending-transaction";
+import { describeAccountError } from "@/lib/mera";
 
 type Tab = "all" | "sharps" | "following";
 
 const RESULT = {
-  right: { label: "Called it", cls: "border-accent text-accent" },
-  wrong: { label: "Missed", cls: "border-line-strong text-muted" },
+  right: { label: "Correct side", cls: "border-accent text-accent" },
+  wrong: { label: "Incorrect side", cls: "border-line-strong text-muted" },
   refunded: { label: "Refunded", cls: "border-line-strong text-muted" },
 } as const;
 
-export function FeedList({ items, tabs = true }: { items: FeedItem[]; tabs?: boolean }) {
+export function FeedList({ items, tabs = true, queryLive = false }: { items: FeedItem[]; tabs?: boolean; queryLive?: boolean }) {
   const [tab, setTab] = useState<Tab>("all");
+  const [voteError, setVoteError] = useState<string | null>(null);
   const account = useKleosAccount();
+  const transaction = usePendingTransaction(`votes:${SOCIAL_ADDRESS}`);
+  const voting = useRef(false);
+  const [filtered, setFiltered] = useState<{ key: string; items: FeedItem[]; error?: string } | null>(null);
+  const filterKey = `${tab}:${account.address ?? ""}`;
+  const remoteFilter = queryLive && tab !== "all" && (tab !== "following" || Boolean(account.address));
+  useEffect(() => {
+    if (!queryLive || tab === "all" || (tab === "following" && !account.address)) return;
+    const controller = new AbortController();
+    const key = `${tab}:${account.address ?? ""}`;
+    const query = new URLSearchParams({ tab, ...(account.address ? { address: account.address } : {}) });
+    void fetch(`/api/feed?${query}`, { signal: controller.signal, cache: "no-store" })
+      .then(async response => {
+        const result = await response.json();
+        if (!response.ok) throw new Error(result.error ?? "Feed unavailable.");
+        if (!controller.signal.aborted) setFiltered({ key, items: result.items });
+      }).catch(error => {
+        if (!controller.signal.aborted) setFiltered({ key, items: [], error: error instanceof Error ? error.message : "Feed unavailable." });
+      });
+    return () => controller.abort();
+  }, [queryLive, tab, account.address]);
+  const currentFilter = filtered?.key === filterKey ? filtered : null;
+  const sourceItems = queryLive && tab !== "all" ? currentFilter?.items ?? [] : items;
   const { data: following } = useReadContract({
     address: SOCIAL_ADDRESS,
     abi: kleosSocialAbi,
@@ -33,7 +58,7 @@ export function FeedList({ items, tabs = true }: { items: FeedItem[]; tabs?: boo
   const followed = new Set((following ?? []).map((a) => a.toLowerCase()));
 
   // Ups and downs: engagement only. Read in one batch; changes apply optimistically.
-  const ids = items.map((i) => BigInt(i.id));
+  const ids = sourceItems.map((i) => BigInt(i.id));
   const { data: tally, refetch: refetchTally } = useReadContract({
     address: SOCIAL_ADDRESS,
     abi: kleosSocialAbi,
@@ -41,10 +66,15 @@ export function FeedList({ items, tabs = true }: { items: FeedItem[]; tabs?: boo
     args: [ids, account.address ?? zeroAddress],
     query: { enabled: Boolean(SOCIAL_ADDRESS) && ids.length > 0 },
   });
-  const [mineOverride, setMineOverride] = useState<Record<number, number>>({});
+  const [mineOverride, setMineOverride] = useState<Record<string, number>>({});
+  async function refreshVoteCounts(key: string) {
+    const result = await refetchTally();
+    if (result.isError) throw new Error("Vote confirmed, but counts could not be refreshed. Refresh the page to read current counts.");
+    setMineOverride(m => { const next = { ...m }; delete next[key]; return next; });
+  }
   const counts = (idx: number, id: number) => {
     const baseMine = tally ? Number(tally[2][idx]) : 0;
-    const mine = mineOverride[id] ?? baseMine;
+    const mine = mineOverride[`${account.address?.toLowerCase() ?? "demo"}:${id}`] ?? baseMine;
     let up = tally ? Number(tally[0][idx]) : 0;
     let down = tally ? Number(tally[1][idx]) : 0;
     // Move the server counts from the recorded vote to the optimistic one.
@@ -56,31 +86,38 @@ export function FeedList({ items, tabs = true }: { items: FeedItem[]; tabs?: boo
   };
 
   async function vote(id: number, current: number, value: 1 | -1) {
-    const next = current === value ? 0 : value; // tapping your vote again clears it
+    if (voting.current || transaction.hasPending()) return;
+    let next = current === value ? 0 : value; // tapping your vote again clears it
     if (!SOCIAL_ADDRESS) {
-      setMineOverride((m) => ({ ...m, [id]: next })); // demo mode: local only
+      setMineOverride((m) => ({ ...m, [`demo:${id}`]: next })); // demo mode: local only
       return;
     }
-    const client = await account.authorize(); // first await: may show the passkey prompt
-    if (!client?.account) return;
-    setMineOverride((m) => ({ ...m, [id]: next }));
+    voting.current = true;
+    let key: string | undefined;
+    let confirmed = false;
     try {
-      await account.whenFunded();
+      setVoteError(null);
+      const client = await account.authorize(); // first await: may show the passkey prompt
+      if (!client?.account) return;
+      key = `${client.account.address.toLowerCase()}:${id}`;
+      const recorded = await publicClient.readContract({ address: SOCIAL_ADDRESS, abi: kleosSocialAbi, functionName: "voteOf", args: [BigInt(id), client.account.address] });
+      next = Number(recorded) === value ? 0 : value;
+      const voteKey = key;
+      setMineOverride((m) => ({ ...m, [voteKey]: next }));
+      await account.whenFunded(client.account.address);
       const hash = await client.writeContract({ account: client.account, chain, address: SOCIAL_ADDRESS, abi: kleosSocialAbi, functionName: "vote", args: [BigInt(id), next] });
-      await publicClient.waitForTransactionReceipt({ hash });
-      await refetchTally();
-      setMineOverride((m) => {
-        const rest = { ...m };
-        delete rest[id];
-        return rest;
-      });
-    } catch {
-      setMineOverride((m) => ({ ...m, [id]: current })); // roll back
-    }
+      await transaction.confirm(hash, { sender: client.account.address, to: SOCIAL_ADDRESS, data: encodeFunctionData({ abi: kleosSocialAbi, functionName: "vote", args: [BigInt(id), next] }) });
+      confirmed = true;
+      transaction.complete();
+      await refreshVoteCounts(key);
+    } catch (error) {
+      if (!confirmed && key) { const voteKey = key; setMineOverride(m => { const next = { ...m }; delete next[voteKey]; return next; }); }
+      setVoteError(confirmed ? "Vote confirmed, but counts could not be refreshed. Refresh the page to read current counts." : describeAccountError(error));
+    } finally { voting.current = false; }
   }
 
-  const shown = items.filter((i) =>
-    tab === "sharps" ? i.r >= SHARP_R : tab === "following" ? followed.has(i.address.toLowerCase()) : true,
+  const shown = sourceItems.filter((i) =>
+    queryLive && tab !== "all" ? true : tab === "sharps" ? i.rawR ? BigInt(i.rawR) >= BigInt(SHARP_R) * 10n ** 18n : i.r >= SHARP_R : tab === "following" ? followed.has(i.address.toLowerCase()) : true,
   );
 
   return (
@@ -100,15 +137,19 @@ export function FeedList({ items, tabs = true }: { items: FeedItem[]; tabs?: boo
         ))}
       </div>
       )}
+      {voteError && <p role="alert" className="text-sm text-accent">{voteError}</p>}
+      <PendingTransactionNotice transaction={transaction} onCheck={() => { void transaction.check().then(async ({ intent }) => { const decoded = decodeFunctionData({ abi: kleosSocialAbi, data: intent.data }); if (decoded.functionName !== "vote") throw new Error("Pending intent is not a vote."); const [id, next] = decoded.args; const key = `${intent.sender.toLowerCase()}:${id}`; setMineOverride(m => ({ ...m, [key]: Number(next) })); transaction.complete(); await refreshVoteCounts(key).catch(e => setVoteError(e.message)); }).catch(e => setVoteError(describeAccountError(e))); }} />
+      {remoteFilter && !currentFilter && <p role="status" className="card p-6 text-muted">Reading matching calls…</p>}
+      {currentFilter?.error && <p role="alert" className="card p-6 text-muted">{currentFilter.error}</p>}
 
-      {shown.length === 0 ? (
+      {shown.length === 0 && !(remoteFilter && (!currentFilter || currentFilter.error)) ? (
         <div className="card flex flex-col items-center gap-3 p-10 text-center">
           <p className="text-muted">
             {tab === "following"
               ? account.status === "none"
                 ? "Start with a passkey, then follow traders from their profiles."
-                : "Nobody you follow has posted a call yet. Follow traders from their profiles."
-              : "No calls yet. Add one when you place a bet."}
+                : "No matching calls in the loaded window. Older calls may be outside it."
+              : "No matching calls in the loaded window."}
           </p>
           <Link href="/leaderboard" className="btn btn-no !min-h-10">
             Find traders
@@ -116,15 +157,15 @@ export function FeedList({ items, tabs = true }: { items: FeedItem[]; tabs?: boo
         </div>
       ) : (
         <ul className="flex flex-col gap-4">
-          {shown.map((i, k) => {
-            const tier = tierOf(i.r);
-            const v = counts(items.indexOf(i), i.id);
-            const sharp = i.r >= SHARP_R;
+          {shown.map((i) => {
+            const tier = i.rawR ? tierOfWad(BigInt(i.rawR)) : tierOf(i.r);
+            const v = counts(sourceItems.indexOf(i), i.id);
+            const sharp = tier >= 4;
             return (
               // Calls from sharps stand out a little: they carry the most signal.
               // Tinted by the side of the bet: coral for YES, lavender for NO.
               <li
-                key={k}
+                key={i.id}
                 className={`card flex flex-col gap-4 p-6 ${
                   !sharp
                     ? ""
@@ -134,11 +175,11 @@ export function FeedList({ items, tabs = true }: { items: FeedItem[]; tabs?: boo
                 }`}
               >
                 <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
-                  <LaurelBadge r={i.r} size={28} />
+                  <LaurelBadge r={i.r} rawR={i.rawR} size={28} />
                   <Link href={`/profile/${i.address}`} className="font-medium text-ink">
                     {i.name ? `@${i.name}` : <span className="font-mono">{shortAddress(i.address)}</span>}
                   </Link>
-                  {tier > 0 && <span className="lbl">{`Tier ${TIER_NAMES[tier]} · R ${i.r.toFixed(1)}`}</span>}
+                  {tier > 0 && <span className="lbl">{`Tier ${TIER_NAMES[tier]} · current R ${i.r.toFixed(1)}`}</span>}
                   {sharp && (
                     <span className={`lbl rounded-full border px-2 py-0.5 ${i.side ? "border-accent/60 !text-accent" : "border-lavender/60 !text-lavender"}`}>
                       Sharp
@@ -169,6 +210,7 @@ export function FeedList({ items, tabs = true }: { items: FeedItem[]; tabs?: boo
                     className={`btn !min-h-9 !gap-2 !px-3 ${v.mine === 1 ? "btn-yes" : "btn-no text-muted"}`}
                     aria-pressed={v.mine === 1}
                     aria-label={`Upvote, ${v.up} ups`}
+                    disabled={Boolean(transaction.pending)}
                     onClick={() => vote(i.id, v.mine, 1)}
                   >
                     ▲ <span>{v.up}</span>
@@ -177,6 +219,7 @@ export function FeedList({ items, tabs = true }: { items: FeedItem[]; tabs?: boo
                     className={`btn !min-h-9 !gap-2 !px-3 ${v.mine === -1 ? "btn-no-active" : "btn-no text-muted"}`}
                     aria-pressed={v.mine === -1}
                     aria-label={`Downvote, ${v.down} downs`}
+                    disabled={Boolean(transaction.pending)}
                     onClick={() => vote(i.id, v.mine, -1)}
                   >
                     ▼ <span>{v.down}</span>

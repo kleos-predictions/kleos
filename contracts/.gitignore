@@ -8,3 +8,4 @@ coverage
 .env.*
 !.env.example
 scripts/.*.ts
+.demo-state/

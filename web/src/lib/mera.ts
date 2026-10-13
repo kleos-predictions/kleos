@@ -25,25 +25,32 @@ export type UnlockedAccount = {
 };
 
 const RP_NAME = "Kleos";
-const EVM_PATH = "m/44'/60'/0'/0/0";
+const EVM_PATH_INDICES = [0x8000002c, 0x8000003c, 0x80000000, 0, 0]; // m/44'/60'/0'/0/0
 
 // The rpId is the site's hostname. Accounts are bound to it, so production must use one fixed domain.
 const rpId = () => location.hostname;
 
 function accountFromPrf(prfOutput: Uint8Array, credential: PasskeyCredentialMetadata): UnlockedAccount {
-  const seed = mnemonicToSeedSync(entropyToMnemonic(prfOutput, wordlist));
-  prfOutput.fill(0);
-  const root = HDKey.fromMasterSeed(seed);
-  const node = root.derive(EVM_PATH);
+  let seed: Uint8Array | undefined;
+  let node: HDKey | undefined;
   try {
+    seed = mnemonicToSeedSync(entropyToMnemonic(prfOutput, wordlist));
+    prfOutput.fill(0);
+    node = HDKey.fromMasterSeed(seed);
+    // Wipe every owned intermediate derivation node, rather than leaving the parent keys
+    // alive until garbage collection. Mera copies the terminal key into its signing session.
+    for (const index of EVM_PATH_INDICES) {
+      const child: HDKey = node.deriveChild(index);
+      node.wipePrivateData();
+      node = child;
+    }
     if (!node.privateKey) throw new Error("Key derivation failed");
-    // The session keeps its own copy of the key, so both HD nodes can be wiped right after.
     const session = createSecp256k1SigningSession({ privateKey: node.privateKey });
     return { session, address: getEvmAddress(session.publicKey), credential };
   } finally {
-    node.wipePrivateData();
-    root.wipePrivateData();
-    seed.fill(0);
+    node?.wipePrivateData();
+    seed?.fill(0);
+    prfOutput.fill(0);
   }
 }
 
@@ -67,10 +74,18 @@ export async function unlockAccount(credential?: PasskeyCredentialMetadata): Pro
 }
 
 /** The 24-word recovery phrase, re-derived behind a fresh passkey prompt. Works in any standard wallet. */
-export async function revealRecoveryPhrase(credential: PasskeyCredentialMetadata): Promise<string> {
-  const { prfOutput } = await getPasskeyPrfOutput({ rpId: rpId(), credential });
+export async function revealRecoveryPhrase(credential: PasskeyCredentialMetadata, expectedAddress: EvmAddress): Promise<string> {
+  const { prfOutput, credentialId } = await getPasskeyPrfOutput({ rpId: rpId(), credential });
   try {
-    return entropyToMnemonic(prfOutput, wordlist);
+    if (credentialId !== credential.credentialId) throw new Error("That passkey does not belong to the selected account.");
+    const phrase = entropyToMnemonic(prfOutput, wordlist);
+    const account = accountFromPrf(prfOutput, credential);
+    try {
+      if (account.address.toLowerCase() !== expectedAddress.toLowerCase()) throw new Error("That passkey does not belong to the selected account.");
+      return phrase;
+    } finally {
+      account.session.end();
+    }
   } finally {
     prfOutput.fill(0);
   }
@@ -80,11 +95,14 @@ const CONTRACT_ERRORS: Record<string, string> = {
   InsufficientBalance: "Not enough test USD for this bet.",
   InsufficientAllowance: "Test USD isn't enabled for Kleos yet. Try again.",
   MarketClosed: "This market is closed for betting.",
+  BadPagination: "Read between 1 and 100 entries at a time.",
+  BadVote: "The vote or its commitment is invalid. An empty commitment is not allowed.",
   BetTooSmall: "The minimum bet is $1.",
-  CallTooLong: "Your call is over 140 characters.",
+  CallTooLong: "Your call is over 140 UTF-8 bytes. Shorten it and try again.",
   NotEligibleResolver: "You need tier II, no position in this market, and not to be its creator.",
   NotEligibleCreator: "Creating markets takes tier V (R ≥ 36).",
   BadCloseTime: "The close time has to be in the future.",
+  BadMarketText: "Add a question, a source, and resolution criteria. Each needs more than whitespace.",
   NameTaken: "That username is taken.",
   NotEnoughJurors: "Not enough eligible jurors to hear a dispute right now, so the proposal stands.",
   NotExpired: "This market can be voided only after its expiry.",

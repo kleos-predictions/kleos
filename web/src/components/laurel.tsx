@@ -1,4 +1,4 @@
-import { litPairs, tierOf, TIER_NAMES } from "@/lib/tiers";
+import { litPairs, tierOf, tierOfWad, TIER_NAMES } from "@/lib/tiers";
 
 // Dot-matrix laurel, 7 pairs per side, listed bottom → top. Right side mirrors x → 64 − x.
 const STEM: [number, number][] = [[28, 57], [21, 53], [16, 47], [13, 40], [12, 32], [13, 24], [16, 17]];
@@ -32,8 +32,8 @@ export function LaurelLogo({ size = 30 }: { size?: number }) {
 }
 
 /** Laurel that fills in bottom-up as the tier rises. */
-export function LaurelBadge({ r, size = 20, label = true }: { r: number; size?: number; label?: boolean }) {
-  const tier = tierOf(r);
+export function LaurelBadge({ r, rawR, size = 20, label = true }: { r: number; rawR?: string; size?: number; label?: boolean }) {
+  const tier = rawR === undefined ? tierOf(r) : tierOfWad(BigInt(rawR));
   return (
     <svg width={size} height={size} viewBox="0 0 64 64" role={label ? "img" : undefined} aria-hidden={label ? undefined : true}>
       {label && <title>{tier ? `Tier ${TIER_NAMES[tier]}` : "No tier yet"}</title>}

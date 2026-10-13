@@ -20,10 +20,10 @@ describe.skipIf(!process.env.KLEOS_TESTNET)("Monad testnet", () => {
   it("indexed state matches Kleos and KleosSocial", async (t) => {
     const kleos = { address: addressOf("Kleos"), abi: artifact("Kleos") };
     const social = { address: addressOf("KleosSocial"), abi: artifact("KleosSocial") };
-    const read = <T>(c: typeof kleos, functionName: string, args: unknown[] = []) => client.readContract({ ...c, functionName, args }) as Promise<T>;
-
-    // A few blocks behind the head, so the RPC reads below see at least the indexed state.
+    // Both the index and every comparison use the same block, never a moving latest head.
     const endBlock = Number(await client.getBlockNumber()) - 5;
+    const read = <T>(c: typeof kleos, functionName: string, args: unknown[] = []) =>
+      client.readContract({ ...c, functionName, args, blockNumber: BigInt(endBlock) }) as Promise<T>;
     const indexer = createTestIndexer();
     const started = Date.now();
     await indexer.process({ chains: { [CHAIN]: { startBlock, endBlock } } as never });
@@ -43,11 +43,22 @@ describe.skipIf(!process.env.KLEOS_TESTNET)("Monad testnet", () => {
     }
 
     const traders = await indexer.Trader.getAll();
+    const coverage = { historyChecked: 0, historyUnknown: 0, deadlineChecked: 0, deadlineUnknown: 0, claimStatesChecked: 0, commitCountsChecked: 0, commitCountsUnknown: 0 };
     for (const x of traders) {
-      const rep = await read<{ r: bigint; pending: bigint; flagged: boolean; resolvedBets: number }>(kleos, "reputation", [x.id]);
+      const rep = await read<{ r: bigint; pending: bigint; vestAt: bigint; flagged: boolean; resolvedBets: number }>(kleos, "reputation", [x.id]);
       t.expect([x.r, x.pending, x.flagged], `trader ${x.id}`).toEqual([rep.r, rep.pending, rep.flagged]);
-      // Seeds set resolvedBets without an event, so the index can only undercount it.
-      t.expect(x.resolvedBets).toBeLessThanOrEqual(rep.resolvedBets);
+      if (x.resolvedBets === undefined) {
+        coverage.historyUnknown++;
+        t.expect(x.resolvedBetsSource).toBe("Unknown");
+      } else {
+        coverage.historyChecked++;
+        t.expect(x.resolvedBets, `trader ${x.id} exact history`).toBe(BigInt(rep.resolvedBets));
+      }
+      if (x.vestAt === undefined) coverage.deadlineUnknown++;
+      else {
+        coverage.deadlineChecked++;
+        t.expect(x.vestAt, `trader ${x.id} vest deadline`).toBe(rep.vestAt);
+      }
       t.expect(x.followerCount, `followers ${x.id}`).toBe(Number(await read<bigint>(social, "followerCount", [x.id])));
       t.expect(x.followingCount, `following ${x.id}`).toBe((await read<Address[]>(social, "following", [x.id])).length);
     }
@@ -61,6 +72,24 @@ describe.skipIf(!process.env.KLEOS_TESTNET)("Monad testnet", () => {
     t.expect(calls.length).toBe(Number(await read<bigint>(kleos, "callCount")));
     const [ups, downs] = await read<[bigint[], bigint[], number[]]>(social, "tallies", [calls.map((c) => BigInt(c.id)), kleos.address]);
     t.expect(calls.map((c) => [c.ups, c.downs])).toEqual(calls.map((_, i) => [Number(ups[i]), Number(downs[i])]));
+
+    for (const pos of await indexer.Position.getAll()) {
+      t.expect(await read<boolean>(kleos, "bonusClaimed", [BigInt(pos.market_id), pos.trader_id]), `position ${pos.id} claimed`).toBe(pos.bonusClaimed);
+      coverage.claimStatesChecked++;
+    }
+    for (const claim of await indexer.BonusClaim.getAll()) {
+      t.expect(await read<boolean>(kleos, "bonusClaimed", [BigInt(claim.market_id), claim.trader_id]), `claim ${claim.id}`).toBe(true);
+      t.expect(await read<bigint>(kleos, "bonusOf", [BigInt(claim.market_id), claim.trader_id]), `claim ${claim.id} amount`).toBe(claim.amount);
+    }
+    for (const round of await indexer.CourtRound.getAll()) {
+      if (round.commits === undefined) coverage.commitCountsUnknown++;
+      else {
+        const commitments = await Promise.all(round.jurors.map((j) => read<`0x${string}`>(kleos, "commitments", [BigInt(round.market_id), round.round, j])));
+        t.expect(round.commits, `round ${round.id} current commitments`).toBe(commitments.filter((c) => BigInt(c) !== 0n).length);
+        coverage.commitCountsChecked++;
+      }
+    }
+    console.log(`Pinned testnet reconciliation at block ${endBlock}: ${JSON.stringify(coverage)}`);
 
     console.log(`${markets.length} markets, ${traders.length} traders, ${calls.length} calls, ${pool.length} jurors, ${(await indexer.Follow.getAll()).length} follows, ${(await indexer.CallVote.getAll()).length} call votes`);
   }, 600_000);

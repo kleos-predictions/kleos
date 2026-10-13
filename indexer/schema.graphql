@@ -21,6 +21,59 @@ enum ChangeKind {
   Admin # marketId 0: demo seed or admin slash
 }
 
+enum HistorySource {
+  Genesis # complete replay starts at deployment; no seed has occurred
+  DirectInput # validated top-level seedReputation calldata
+  Unknown # an admin event may have reset history through a nested call
+}
+
+enum AdminAction {
+  Seed
+  Slash
+  Unknown
+}
+
+enum CommitmentSource {
+  Genesis
+  DirectInput
+  Reveal # successful reveal proves nonzero state, but not the commitment bytes
+  Unknown
+}
+
+enum ConfigurationSource {
+  DirectCreation
+  PinnedSnapshot
+  Unknown
+}
+
+enum VestDeadlineSource {
+  Genesis
+  DirectCreation
+  PinnedSnapshot
+  Unknown
+}
+
+enum OwnerSource {
+  DirectCreation
+  Event
+  Unknown
+}
+
+# Only direct creation input whose receipt contractAddress matches the event emitter is used.
+# Factory deployments remain explicitly unknown. Envio namespaces this entity by chain.
+type ContractConfiguration {
+  id: ID! # lowercase Kleos address
+  source: ConfigurationSource!
+  vestPeriod: BigInt
+  nMin: BigInt
+  disputeWindow: BigInt
+  courtPeriod: BigInt
+  blockNumber: Int
+  txHash: String
+  blockHash: String
+  runtimeSha256: String
+}
+
 type Category {
   id: ID! # category id
   name: String!
@@ -93,12 +146,15 @@ type Position {
   payout: BigInt!
   bonusWeight: BigInt! # ΔR⁺·M from settlement; 0 unless the trader gained reputation here
   bonus: BigInt! # claimed so far
+  bonusClaimed: Boolean! # true even when the successful claim paid zero
   sharpYes: Boolean! # counted in Market.sharpYes
   sharpNo: Boolean!
 }
 
 # Composite index: the market page lists bets newest first.
-type Bet @index(fields: ["market", ["timestamp", "DESC"]]) {
+type Bet
+  @index(fields: ["market", ["timestamp", "DESC"]])
+  @index(fields: ["market", ["blockNumber", "DESC"], ["logIndex", "DESC"]]) {
   id: ID! # block_logIndex
   market: Market! @index
   trader: Trader! @index
@@ -111,15 +167,20 @@ type Bet @index(fields: ["market", ["timestamp", "DESC"]]) {
   sharp: Boolean! # traderR ≥ 16 (tier IV): counts toward the sharp signal
   timestamp: Int! @index
   txHash: String!
+  blockNumber: Int!
+  logIndex: Int!
+  contractAddress: String!
 }
 
 # Both prices right after a bet, for the price chart.
-type PricePoint {
+type PricePoint @index(fields: ["market", ["blockNumber", "DESC"], ["logIndex", "DESC"]]) {
   id: ID! # block_logIndex
   market: Market! @index
   timestamp: Int! @index
   priceRepYes: BigInt!
   priceMoneyYes: BigInt!
+  blockNumber: Int!
+  logIndex: Int!
 }
 
 type Trader {
@@ -129,7 +190,11 @@ type Trader {
   followingCount: Int!
   r: BigInt! @index # vested reputation; the leaderboard sorts by it
   pending: BigInt! # gains waiting to vest
-  resolvedBets: Int! # positions of at least $50 settled in deep markets. Seeds set it without an event, so seeded traders read low
+  resolvedBets: BigInt # exact uint32 history, or null after an unrecoverable nested admin event
+  resolvedBetsSource: HistorySource!
+  vestAt: BigInt # contract deadline; not cleared by Vested or a loss
+  vestAtSource: VestDeadlineSource!
+  lastGainAt: Int # last observed deadline-resetting gain
   flagged: Boolean!
   slashed: BigInt! # reputation removed by the admin after review
   isJuror: Boolean! # in the Kleos Court pool
@@ -151,11 +216,15 @@ type Trader {
 }
 
 # Every ReputationChanged event, so anyone can rebuild R and check the math.
-type ReputationChange @index(fields: ["trader", ["timestamp", "DESC"]]) {
+type ReputationChange
+  @index(fields: ["trader", ["timestamp", "DESC"]])
+  @index(fields: ["trader", ["blockNumber", "DESC"], ["logIndex", "DESC"]]) {
   id: ID! # block_logIndex
   trader: Trader! @index
   market: Market # unset for Admin changes (marketId 0)
   kind: ChangeKind!
+  adminAction: AdminAction # only set for marketId 0
+  resolvedBets: BigInt # recovered seed count, when available
   delta: BigInt! # signed
   newR: BigInt!
   pendingR: BigInt!
@@ -164,13 +233,62 @@ type ReputationChange @index(fields: ["trader", ["timestamp", "DESC"]]) {
   outcome: Boolean!
   timestamp: Int! @index
   txHash: String!
+  blockNumber: Int!
+  logIndex: Int!
+  contractAddress: String!
+}
+
+# Complete claim state, including zero claims by an address without a Position.
+type BonusClaim {
+  id: ID! # marketId_address: one successful claim per user
+  market: Market! @index
+  trader: Trader! @index
+  amount: BigInt!
+  eventId: String!
+  timestamp: Int!
+  txHash: String!
+  blockNumber: Int!
+  logIndex: Int!
+  contractAddress: String!
+}
+
+type Vesting @index(fields: ["trader", ["blockNumber", "DESC"], ["logIndex", "DESC"]]) {
+  id: ID! # block_logIndex
+  trader: Trader! @index
+  amount: BigInt!
+  newR: BigInt!
+  timestamp: Int!
+  txHash: String!
+  blockNumber: Int!
+  logIndex: Int!
+  contractAddress: String!
+}
+
+type Slash {
+  id: ID! # block_logIndex; followed by the action's ReputationChanged
+  trader: Trader! @index
+  amount: BigInt!
+  txHash: String!
+}
+
+type OwnershipChange {
+  id: ID!
+  previousOwner: String!
+  newOwner: String!
+  timestamp: Int!
+  txHash: String!
+  blockNumber: Int!
+  logIndex: Int!
+  contractAddress: String!
 }
 
 # A public one-line reason posted with a bet. Id = the callId Kleos numbers from 1, which
 # KleosSocial votes use too.
 type Call
   @index(fields: ["market", ["timestamp", "DESC"]])
-  @index(fields: ["trader", ["timestamp", "DESC"]]) {
+  @index(fields: ["trader", ["timestamp", "DESC"]])
+  @index(fields: ["market", ["blockNumber", "DESC"], ["logIndex", "DESC"]])
+  @index(fields: ["trader", ["blockNumber", "DESC"], ["logIndex", "DESC"]]) {
   id: ID!
   market: Market! @index
   trader: Trader! @index
@@ -183,6 +301,9 @@ type Call
   downs: Int!
   timestamp: Int! @index
   txHash: String!
+  blockNumber: Int!
+  logIndex: Int!
+  contractAddress: String!
   votes: [CallVote!]! @derivedFrom(field: "call")
 }
 
@@ -219,7 +340,8 @@ type CourtRound {
   round: Int!
   jurors: [String!]! # lowercase addresses, as drawn
   drawnAt: Int!
-  commits: Int!
+  commits: Int # current nonzero commitments; null if any seat's state is unknown
+  commitEvents: Int! # all writes, including replacements and zero cancellations
   reveals: Int!
   yes: Int!
   no: Int!
@@ -235,7 +357,9 @@ type JurorVote {
   id: ID!
   round: CourtRound! @index
   juror: Trader! @index
-  committed: Boolean!
+  committed: Boolean # current nonzero state; null if nested calldata cannot be recovered
+  commitment: String # bytes recovered from validated direct commitVote input
+  commitmentSource: CommitmentSource!
   vote: Int! # 0 until revealed; then 1 YES, 2 NO, 3 AMBIGUOUS
 }
 
@@ -250,4 +374,6 @@ type Protocol {
   jurorCount: Int! # current pool size
   revenueAccrued: BigInt! # 1% of losing pools plus creation fees
   revenueWithdrawn: BigInt!
+  owner: String # null until observed or recovered from direct creation
+  ownerSource: OwnerSource!
 }

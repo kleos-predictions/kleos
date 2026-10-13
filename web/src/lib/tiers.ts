@@ -8,6 +8,11 @@ export function tierOf(r: number): number {
   return TIER_THRESHOLDS.filter((t) => r >= t).length;
 }
 
+/** Use exact contract units for threshold labels; Number can round a value below a tier up. */
+export function tierOfWad(r: bigint): number {
+  return TIER_THRESHOLDS.filter((threshold) => r >= BigInt(threshold) * 10n ** 18n).length;
+}
+
 /** Lit leaf pairs per side (out of 7), bottom up. */
 export function litPairs(tier: number): number {
   return [1, 2, 3, 5, 6, 7][tier];

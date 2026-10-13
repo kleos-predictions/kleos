@@ -31,7 +31,11 @@ export function getTrader(context: EvmOnEventContext, address: string): Promise<
     followingCount: 0,
     r: 0n,
     pending: 0n,
-    resolvedBets: 0,
+    resolvedBets: 0n,
+    resolvedBetsSource: "Genesis",
+    vestAt: 0n,
+    vestAtSource: "Genesis",
+    lastGainAt: undefined,
     flagged: false,
     slashed: 0n,
     isJuror: false,
@@ -56,5 +60,7 @@ export function getProtocol(context: EvmOnEventContext): Promise<Protocol> {
     jurorCount: 0,
     revenueAccrued: 0n,
     revenueWithdrawn: 0n,
+    owner: undefined,
+    ownerSource: "Unknown",
   });
 }

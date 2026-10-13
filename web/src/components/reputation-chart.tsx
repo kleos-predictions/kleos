@@ -1,4 +1,4 @@
-import { smoothPath } from "@/lib/path";
+import { stepPath } from "@/lib/path";
 import { TIER_NAMES, TIER_THRESHOLDS } from "@/lib/tiers";
 
 const W = 800;
@@ -22,7 +22,7 @@ export function ReputationChart({ points, height = 240 }: { points: { t: number;
 
   const x = (t: number) => PAD.l + ((t - t0) / Math.max(t1 - t0, 1)) * (W - PAD.l - PAD.r);
   const y = (r: number) => PAD.t + (1 - r / yMax) * (H - PAD.t - PAD.b);
-  const line = smoothPath(points.map((p) => [x(p.t), y(p.r)]));
+  const line = stepPath(points.map((p) => [x(p.t), y(p.r)]));
 
   // One tick per month boundary inside the range; fall back to the end dates for short ranges.
   const months: { t: number; label: string }[] = [];
@@ -73,8 +73,8 @@ export function ReputationChart({ points, height = 240 }: { points: { t: number;
       </text>
 
       {/* Months */}
-      {xTicks.map((m) => (
-        <g key={m.t}>
+      {xTicks.map((m, i) => (
+        <g key={`${m.t}-${i}`}>
           <line x1={x(m.t)} x2={x(m.t)} y1={y(0)} y2={y(0) + 5} stroke="var(--color-line-strong)" />
           <text x={x(m.t)} y={H - 8} textAnchor="middle" fontSize={11} fill="var(--color-muted)" fontFamily="var(--font-mono)">
             {m.label.toUpperCase()}

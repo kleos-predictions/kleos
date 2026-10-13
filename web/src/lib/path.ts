@@ -16,8 +16,20 @@ export function smoothPath(pts: [number, number][]): string {
   return d;
 }
 
+/** Straight segments preserve the bounds of observed values. */
+export function linearPath(pts: [number, number][]): string {
+  return pts.map(([x, y], i) => `${i === 0 ? "M" : "L"}${x.toFixed(1)} ${y.toFixed(1)}`).join(" ");
+}
+
+/** Event values remain constant until the next event. */
+export function stepPath(pts: [number, number][]): string {
+  if (pts.length === 0) return "";
+  return `M${pts[0][0].toFixed(1)} ${pts[0][1].toFixed(1)}` + pts.slice(1).map(([x, y]) => ` H${x.toFixed(1)} V${y.toFixed(1)}`).join("");
+}
+
 /** Keeps every nth point plus the last one. */
 export function downsample<T>(arr: T[], target: number): T[] {
+  if (target < 2) return arr.length ? [arr[arr.length - 1]] : [];
   if (arr.length <= target) return arr;
   const step = (arr.length - 1) / (target - 1);
   return Array.from({ length: target }, (_, i) => arr[Math.round(i * step)]);

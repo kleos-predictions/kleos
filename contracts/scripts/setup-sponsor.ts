@@ -3,13 +3,14 @@
 //
 //   npx hardhat run scripts/setup-sponsor.ts --network monadTestnet
 //
-// Run it after seed-demo (which mints from the deployer while it is still the sponsor). The key
+// Seed uses the deployer or this dedicated sponsor as appropriate. The key
 // is written to contracts/.env.demo and web/.env.local (both git-ignored) and never printed.
 import { network } from "hardhat";
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
-import { parseEther, type Address, type Hex } from "viem";
+import { readFileSync } from "node:fs";
+import { encodeFunctionData, parseEther, type Address, type Hex } from "viem";
 import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
-import { demoSecret, writeDemoEnv } from "./demo-wallets.ts";
+import { DEMO_ENV, demoSecret } from "./demo-wallets.ts";
+import { atomicEnvValue, configureOperatorSponsor } from "./operator-receipt.ts";
 
 const { viem } = await network.getOrCreate();
 const publicClient = await viem.getPublicClient();
@@ -18,30 +19,26 @@ const deployed = JSON.parse(readFileSync(`ignition/deployments/chain-${chainId}/
 const usd = await viem.getContractAt("KleosUSD", deployed["KleosModule#KleosUSD"] as Address);
 const [owner] = await viem.getWalletClients();
 
-// Each new passkey account gets 0.3 MON (web/src/app/api/sponsor/route.ts), and re-seeding mints
-// through this wallet (~0.5 MON of gas). 2 MON covers about five accounts plus a re-seed.
+// Each funding attempt may send 0.3 MON (web/src/app/api/sponsor/route.ts).
+// 2 MON is a configurable demo reserve, not a guaranteed account or transaction count.
 const FUNDING = parseEther(process.env.KLEOS_SPONSOR_MON ?? "2");
 
-let key = demoSecret("SPONSOR_PRIVATE_KEY") as Hex | undefined;
-if (!key) {
-  key = generatePrivateKey();
-  writeDemoEnv("SPONSOR_PRIVATE_KEY", key);
-}
+const key = (demoSecret("SPONSOR_PRIVATE_KEY") as Hex | undefined) ?? generatePrivateKey();
 const sponsor = privateKeyToAccount(key).address;
 
-if ((await usd.read.sponsor()).toLowerCase() !== sponsor.toLowerCase()) {
-  await publicClient.waitForTransactionReceipt({ hash: await usd.write.setSponsor([sponsor], { account: owner.account }) });
-}
-const balance = await publicClient.getBalance({ address: sponsor });
-if (balance < FUNDING) {
-  await publicClient.waitForTransactionReceipt({ hash: await owner.sendTransaction({ to: sponsor, value: FUNDING - balance }) });
-}
-
 // The web server reads it from web/.env.local locally; copy it into Vercel's env settings by hand.
-const envPath = "../web/.env.local";
-let env = existsSync(envPath) ? readFileSync(envPath, "utf8") : "";
-env = /^SPONSOR_PRIVATE_KEY=.*$/m.test(env) ? env.replace(/^SPONSOR_PRIVATE_KEY=.*$/m, `SPONSOR_PRIVATE_KEY=${key}`) : `${env.trimEnd()}\nSPONSOR_PRIVATE_KEY=${key}\n`;
-writeFileSync(envPath, env);
+const balance = await configureOperatorSponsor(publicClient, {
+  owner: owner.account.address,
+  token: usd.address,
+  sponsor,
+  funding: FUNDING,
+  setSponsorData: encodeFunctionData({ abi: usd.abi, functionName: "setSponsor", args: [sponsor] }),
+  readSponsor: () => usd.read.sponsor(),
+  setSponsor: () => usd.write.setSponsor([sponsor], { account: owner.account }),
+  fund: (value) => owner.sendTransaction({ to: sponsor, value }),
+  persistCustody: () => atomicEnvValue(DEMO_ENV, "SPONSOR_PRIVATE_KEY", key),
+  publish: () => atomicEnvValue("../web/.env.local", "SPONSOR_PRIVATE_KEY", key),
+});
 
-console.log(`Sponsor ${sponsor} is KleosUSD's sponsor and holds ${Number(await publicClient.getBalance({ address: sponsor })) / 1e18} MON.`);
+console.log(`Sponsor ${sponsor} is KleosUSD's sponsor and holds ${Number(balance) / 1e18} MON.`);
 console.log("Its key is in contracts/.env.demo and web/.env.local (git-ignored).");

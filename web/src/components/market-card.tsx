@@ -9,6 +9,7 @@ const pct = (n: number) => `${Math.round(n * 100)}%`;
 export function MarketCard({ market, index }: { market: Market; index: number }) {
   const href = `/market/${market.id}`;
   const inDispute = market.status === "dispute" && market.proposed;
+  const tradable = market.status === "live" || market.status === "closing";
 
   return (
     <article className="card flex min-h-[340px] flex-col justify-between gap-6 p-6">
@@ -25,7 +26,7 @@ export function MarketCard({ market, index }: { market: Market; index: number })
         <Link href={href} className="text-[21px] leading-[1.3] font-medium text-balance">
           {market.question}
         </Link>
-        <SharpSignal {...market.sharps} compact />
+        {market.live?.sharpsAvailable !== false && <SharpSignal {...market.sharps} compact />}
       </div>
 
       <div className="flex items-end justify-between gap-4">
@@ -40,10 +41,10 @@ export function MarketCard({ market, index }: { market: Market; index: number })
             <span className="lbl">Yes · reputation</span>
           </div>
         )}
-        <Sparkline points={market.history} muted={Boolean(inDispute)} />
+        {market.history.length > 1 && <Sparkline points={market.history} muted={Boolean(inDispute)} />}
       </div>
 
-      {inDispute ? (
+      {!tradable ? (
         <Link href={href} className="btn btn-no w-full">
           View resolution
         </Link>

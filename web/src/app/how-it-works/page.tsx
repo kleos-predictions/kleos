@@ -12,39 +12,39 @@ export const metadata: Metadata = {
 const WHY = [
   {
     title: "Opinions with receipts",
-    body: "Every bet can carry a call: a public one-line reason, written before the outcome and scored after it. Follow the traders who call it early, and see who was right, not who was loudest.",
+    body: "A bet can carry a public one-line reason posted before market close. Recorded outcomes label the chosen side after resolution. Whether a call preceded public knowledge depends on the event and its deadline.",
   },
   {
-    title: "Glory you earn, not buy",
-    body: "Kleos is the Greek word for the renown a person earns through their deeds, carried by what others say about them. Here that renown is your track record: public, non-transferable and impossible to buy.",
+    title: "A public record",
+    body: "Kleos records bets, results and reputation updates on-chain. R is bound to an address; addresses do not establish independent people or prevent account transfer.",
   },
   {
     title: "Attention goes to who was right",
-    body: "Feeds reward the loudest voice and markets reward the biggest wallet. Kleos shifts attention to people who called it before the crowd did, and shows their read next to the money's read.",
+    body: "The feed makes calls and results easy to inspect. Reputation-weighted pool shares appear beside money shares. Whether this helps readers find useful forecasts still needs measurement.",
   },
   {
     title: "Status anyone can check",
-    body: "Every reputation change is an on-chain event with the math attached. Look up any trader, retrace every point they earned or lost, and verify it on Monadscan. No private scores, no black box.",
+    body: "Profiles link observed reputation changes to on-chain transactions. Administrator adjustments and court rewards also affect R; unavailable history is shown explicitly.",
   },
   {
-    title: "A culture of calling it early",
-    body: "Agreeing with the crowd earns almost nothing. Being early and right earns a lot. Being loud and wrong costs more than it pays. The incentives favor independent thinking over hype.",
+    title: "An experiment in forecasting",
+    body: "The scoring experiment rewards correct contrarian sides. Caps, the zero floor and wallet partitioning affect incentives. Predictive value still needs measurement against independent baselines.",
   },
 ];
 
 const STACK = [
-  ["Chain", "Monad testnet · EVM, ~400 ms blocks, cheap enough to log every reputation change"],
+  ["Chain", "Monad testnet · EVM. Recorded outcomes and reputation updates are on-chain; this prototype uses nonredeemable test tokens."],
   ["Contracts", "Kleos.sol (markets, weighting, payouts, reputation, Kleos Court) · KleosSocial.sol (usernames, follows, votes on calls) · KleosUSD.sol (test stablecoin)"],
-  ["Accounts", "Mera passkeys: no wallet, no extension, no seed phrase. The account is derived from the passkey on any device; nothing secret is stored. Gas and test USD are sponsored, so a first bet is one transaction"],
-  ["Sessions", "Prompt-free while unlocked: bets up to $100, follows, votes, settling. The passkey is asked again for bigger bets, bonds, jury votes and the recovery phrase. 15 idle minutes lock the account"],
-  ["Verifiability", "ReputationChanged(user, marketId, delta, newR, entryPrice, side, outcome) on every update"],
-  ["Market creation", "The team, or any tier-V trader (R ≥ 36) with a $25 bond plus a $2 fee. The bond comes back on a clean resolution and is lost if the court rules the question ambiguous. Creators can't propose the outcome or sit on the jury"],
-  ["Resolution", "Propose with a $10 bond → dispute window → finalize. A dispute ($15 bond) goes to the Kleos Court: 5 jurors, commit-reveal votes, 3 of 5 decide"],
-  ["Jury secrets", "A juror's hidden vote is salted with a deterministic passkey signature, so it can be revealed from any device with nothing stored"],
-  ["Social", "Calls: a public 140-character reason attached to a bet, scored when the market resolves. Feed, follows, usernames and ▲▼ votes live on-chain"],
+  ["Accounts", "Mera passkeys derive an account without a wallet extension. Public credential metadata is cached; signing keys live only in memory. Recovery can reveal a phrase after a fresh prompt. A bet is one user-signed transaction after separate sponsor funding."],
+  ["Sessions", "While unlocked, the account holds full signing authority. The UI re-prompts for larger bets, bonds and jury votes; these are UI rules, not cryptographic spending limits. Fifteen idle minutes lock the session."],
+  ["Verifiability", "ReputationChanged records applied updates and pending R. Vested records transfers into vested R. Seed, slash and court activity also appear in the public record."],
+  ["Market creation", "The team, or any tier-V trader (R ≥ 36) with a $25 bond plus a $2 fee. The bond comes back on a clean resolution and is lost if the court rules the question ambiguous. Creators cannot sit on their jury. Only the owner has a proposal exception on its own unbet markets."],
+  ["Resolution", "Propose with a $10 bond → dispute window → finalize. A dispute ($15 bond) draws up to five eligible court addresses; three matching revealed votes decide."],
+  ["Jury secrets", "The app derives a vote salt from a deterministic passkey signature and binds it to chain, market, round, address and vote. Cross-device recovery still needs physical-device verification."],
+  ["Social", "Calls contain up to 140 UTF-8 bytes. Results compare the chosen side with the recorded outcome. Usernames, follows and per-address engagement votes are on-chain."],
   ["Settlement", "Permissionless: anyone can settle any trader, so losses land even if the loser never comes back"],
-  ["Frontend", "Next.js · wagmi / viem · formulas mirrored client-side so every preview matches the contract"],
-  ["Tests", "Hardhat · 48 tests; the pitch numbers (44% vs 71%, $177 + bonus payout, +0.70 / −1.43) are asserted against the contract"],
+  ["Frontend", "Next.js · wagmi / viem. Live quotes come from a pinned contract read; the mined BetPlaced event supplies actual applied weight. Quotes can change before execution."],
+  ["Tests", "Hardhat local tests cover pitch arithmetic, payouts, court and repair regressions. Test counts and coverage are recorded in the repository; they are not a security certification."],
 ];
 
 const EVENTS = [
@@ -58,15 +58,15 @@ const FAILURES = [
     date: "Mar 2025",
     what: "In Polymarket's $7M Ukraine minerals market, one UMA token whale reportedly cast about 25% of dispute votes and forced a premature \u201cYes\u201d.",
     source: "https://thedefiant.io/news/defi/polymarket-s-usd7m-ukraine-mineral-deal-debacle-traced-to-oracle-whale",
-    answer: "Resolvers are gated by earned reputation, not purchasable tokens.",
+    answer: "Proposers need R and a bond. R can include administrative and court adjustments; independent qualification remains a mechanism decision.",
     live: true,
   },
   {
     title: "Conflicted judges",
     date: "2026",
-    what: "A Wall Street Journal investigation reportedly found nearly 20% of disputed Polymarket outcomes involved oracle voters with stakes in the market they judged.",
+    what: "Secondary reporting describes disputed outcomes involving oracle voters who also held market positions. The original methodology has not been verified here.",
     source: "https://www.turbinefi.com/blog/how-prediction-markets-resolve-oracles-disputes-2026",
-    answer: "Anyone with a position is excluded from resolving that market.",
+    answer: "The same address cannot propose or judge a market where it bet. Other controlled addresses and off-platform interests are not detected.",
     live: true,
   },
   {
@@ -74,13 +74,13 @@ const FAILURES = [
     date: "Oct 2024",
     what: "One trader spread more than $45 million of Trump bets across several Polymarket accounts.",
     source: "https://www.theblock.co/post/324996/polymarket-whale-us-election-profit-france-ban",
-    answer: "A reputation-weighted price shown next to the money price, with a 10% per-address cap.",
+    answer: "A reputation-weighted pool share beside the money share. The prospective cap is path dependent and does not impose a permanent 10% limit.",
     live: true,
   },
   {
     title: "Insider trading",
     date: "Apr 2026",
-    what: "In a federal criminal case, a soldier is charged with using classified information to bet about $33,000 on the Maduro operation and cashing out about $400,000.",
+    what: "The DOJ alleges a soldier used classified information to wager about $33,034 and profit about $409,881 on Maduro-related markets.",
     source: "https://www.justice.gov/opa/pr/us-soldier-charged-using-classified-information-profit-prediction-market-bets",
     answer: "Reputation vests over time, gains are capped per market, anomalies are reviewed.",
     live: true,
@@ -89,38 +89,33 @@ const FAILURES = [
 
 const EVIDENCE = [
   {
-    text: "Small crowds of proven forecasters outperform larger crowds in both markets and polls.",
-    cite: "Atanasov, Witkowski, Mellers & Tetlock, International Journal of Forecasting, 2025",
-    source: "https://www.sciencedirect.com/science/article/abs/pii/S0169207023001413",
-  },
-  {
-    text: "Across 5,456 Polymarket and Kalshi markets, bigger bettors were not more accurate; in some markets whales had negative edge.",
-    cite: "Daleep et al., 2026",
-    source: "https://klementoninvesting.substack.com/p/a-fundamental-flaw-of-prediction",
+    text: "Research on a forecasting competition found selected elite crowds outperformed larger crowds. This motivates testing Kleos; it does not validate its score or pool shares.",
+    cite: "Atanasov, Witkowski, Mellers & Tetlock · author-hosted preprint, 2024",
+    source: "https://faculty.wharton.upenn.edu/wp-content/uploads/2016/11/Crowd-Prediction-Systems.pdf",
   },
 ];
 
 const SAFEGUARDS = [
   ["Activation", "Boost stays 1.0× until 10 resolved positions of at least $50. A handful of bets is mostly luck."],
-  ["Money pays money", "Payouts split the losing pool by money, so reputation can't be rented out. A 2% fee funds a bonus for winners who gained reputation; 1% is protocol revenue."],
-  ["Vesting", "Gains vest over 7 days; losses apply immediately. The boost uses vested reputation only."],
+  ["Money pays money", "Principal payouts split the losing pool by money. Reputation affects signal and bonus weight. A 2% fee funds eligible bonuses; 1% is protocol revenue. These rules do not prevent account transfer or wallet partitioning."],
+  ["Vesting", "Vesting is deployment-configured: the recorded testnet uses 300 seconds. Source repairs preserve an already matured, unflagged balance before adding a gain. Immature gains still share a deadline; losses apply immediately."],
   ["Per-market cap", "Reputation gained from any single market is capped at +0.8."],
-  ["Minimum depth", "Reputation only moves in markets deep enough that you can't farm it against your own wallets."],
+  ["Minimum depth", "Reputation requires a $1,000 pool and ten addresses. These gates do not establish capital at risk or independent ownership."],
   ["Anomaly review", "New accounts that win a long shot with a big bet are held for review before gains vest. A heuristic, not an accusation."],
-  ["Resolver gating", "Proposing an outcome needs earned reputation and no position in that market. Disputing costs a $15 bond, so nobody disputes just because they lost."],
-  ["Kleos Court", "Disputes go to 5 jurors drawn from tier-V traders with no stake. Votes stay hidden until everyone has committed. 3 matching votes decide YES, NO or AMBIGUOUS (full refund). Jurors who vote with the verdict gain reputation; jurors whose absence forces a refund lose it."],
-  ["Topic limits", "No markets on military operations or internal government decisions."],
+  ["Resolver gating", "Proposing needs R ≥ 4 and no position, with an owner exception for its own unbet market. Anyone except the proposer can dispute with a $15 bond, including bettors."],
+  ["Kleos Court", "Disputes draw up to five eligible addresses. Votes remain hidden until the commit deadline. Three matching votes decide YES, NO or AMBIGUOUS. A failed round can redraw; failure after two rounds refunds stakes. Rewards track agreement with the verdict, not independently established truth."],
+  ["Topic limits", "Category IDs are allowlisted. Military and internal-government topics require semantic curation; categorizing a question as Crypto does not technically block its content."],
 ];
 
 const LIMITATIONS = [
-  ["Jury bribery", "Votes are hidden until the reveal, but a juror can prove their vote afterward, so open bribes are possible. Random draws and reputation at stake make it costly, not impossible. Jury draws use block randomness, which block producers can nudge."],
-  ["Parimutuel pricing", "Thin markets move sharply with each bet. LMSR is the planned upgrade for thin markets."],
+  ["Jury bribery", "Votes can be proven after reveal. Address exclusions do not detect common control, and a random starting slot followed by consecutive eligible entries creates correlated juries. Independence, selection and incentives need redesign."],
+  ["Parimutuel pricing", "Thin markets move sharply. Principal returns depend on final pool composition; positions cannot be sold or withdrawn. A funded market-maker design would require separate mechanism review."],
   ["Heuristic flag", "The anomaly flag is a heuristic, not proof of insider trading."],
 ];
 
 function Status({ live }: { live: boolean }) {
   return live ? (
-    <span className="lbl flex items-center gap-1.5 !text-accent"><span className="size-1.5 rounded-full bg-accent" />Live</span>
+    <span className="lbl flex items-center gap-1.5 !text-accent"><span className="size-1.5 rounded-full bg-accent" />Prototype</span>
   ) : (
     <span className="lbl rounded-full border border-line-strong px-2 py-0.5">Building</span>
   );
@@ -136,14 +131,14 @@ export default function HowItWorks() {
         </h1>
         <p className="max-w-[720px] text-xl leading-relaxed text-muted md:text-2xl">
           A prediction market with a verifiable reputation layer. Every bet weighs{" "}
-          <span className="text-ink">money × reputation</span>, and reputation only comes from being right when the crowd was wrong.
+          <span className="text-ink">money × reputation multiplier</span>. The score is experimental and includes bets, court duties and administrator adjustments.
         </p>
       </header>
 
       <section className="flex flex-col gap-6" aria-labelledby="why-kleos">
         <div className="flex flex-col gap-2">
           <h2 id="why-kleos" className="font-dot text-[28px] font-black md:text-[36px]">WHY KLEOS</h2>
-          <p className="text-muted">Prediction markets are failing in four specific ways. Each one has a direct answer here.</p>
+          <p className="text-muted">Reported market disputes motivate these rules. The rules narrow some risks; they do not demonstrate their elimination.</p>
         </div>
         <div className="grid gap-6 md:grid-cols-2">
           {FAILURES.map((f, i) => (

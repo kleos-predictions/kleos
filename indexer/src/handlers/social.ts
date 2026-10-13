@@ -53,6 +53,9 @@ indexer.onEvent({ contract: "KleosSocial", event: "CallVoted" }, async ({ event,
   } else {
     // The call isn't posted yet: keep a running tally by id, so CallPosted needn't query votes.
     const tally = (await context.PendingCallTally.get(callId.toString())) ?? { id: callId.toString(), ups: 0, downs: 0 };
-    context.PendingCallTally.set({ ...tally, ...move(tally) });
+    const next = move(tally);
+    // Clearing the last vote on an arbitrary future id should not leave an empty tally forever.
+    if (next.ups === 0 && next.downs === 0) context.PendingCallTally.deleteUnsafe(tally.id);
+    else context.PendingCallTally.set({ ...tally, ...next });
   }
 });
