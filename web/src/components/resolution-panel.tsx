@@ -156,8 +156,10 @@ export function ResolutionPanel({ marketId, oracle }: { marketId: number; oracle
   }, [id, account.address]);
 
   const invalidateRead = useCallback(() => { sequence.current++; }, []);
-  // Deadlines affect availability; only a fresh chain read establishes state.
-  const final = Boolean(snap && snap.market.state === STATE.Resolved && snap.bonusOpen && (snap.me.bonus === 0n || snap.me.bonusClaimed));
+  // A previous account or market's terminal snapshot must not stop retries after a skipped read.
+  const final = Boolean(snap && !readError && snap.marketId === id &&
+    snap.accountAddress?.toLowerCase() === account.address?.toLowerCase() &&
+    snap.market.state === STATE.Resolved && snap.bonusOpen && (snap.me.bonus === 0n || snap.me.bonusClaimed));
   useEffect(() => {
     const first = setTimeout(refresh, 0);
     const t = final ? undefined : setInterval(() => {
