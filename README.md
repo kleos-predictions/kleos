@@ -6,7 +6,7 @@
 
 <img width="3000" height="1000" alt="Kleos: your track record is worth more than their bankroll" src="https://github.com/user-attachments/assets/3f0683aa-7e7a-4590-9c67-e028b576fd30" />
 
-**[Live app](https://kleos-iota.vercel.app)** · **Demo video** _(link soon)_ · **Pitch deck** _(link soon)_ · **Envio GraphQL** _(endpoint soon)_
+**[Live app](https://kleos.wtf)** · **Demo video** _(link soon)_ · **Pitch deck** _(link soon)_ · **[Envio GraphQL](https://indexer.dev.hyperindex.xyz/27dbf62/v1/graphql)**
 
 | Contract (Monad testnet, chain 10143) | Address |
 |---|---|
