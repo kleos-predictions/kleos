@@ -10,6 +10,7 @@ import { demoDeployment } from "./demo-deployment.ts";
 import { DEMO_MARKETS, demoCloseTimes } from "./demo-markets.ts";
 import { resumeDemoResolution } from "./demo-lifecycle.ts";
 import { mintDemoTokens } from "./demo-funding.ts";
+import { readDemoBettors } from "./demo-bettors.ts";
 
 const { viem } = await network.getOrCreate();
 const publicClient = await viem.getPublicClient();
@@ -193,9 +194,7 @@ try {
     propose: () => operation("resolved-demo:propose", () => kleos.write.propose([resolved, true, evidenceHash, evidenceURI], { account: jurors[0].account }), jurors[0].account.address),
     finalize: () => operation("resolved-demo:finalize", () => kleos.write.finalize([resolved], { account: owner.account })),
   });
-  const count = await kleos.read.bettorCount([resolved]);
-  if (count > 100n) throw new Error("The demo market has over 100 bettors; use the bounded settlement UI/keeper instead of this seed script.");
-  const resolvedBettors = await kleos.read.getBettorsPage([resolved, 0n, 100n]);
+  const resolvedBettors = await readDemoBettors(publicClient, kleos, resolved);
   await operation("resolved-demo:settle", () => kleos.write.settle([resolved, resolvedBettors], { account: owner.account }));
 
   const live = await createMarket("live-demo", "Kleos demo: will the room vote YES on this market?", 4, "Show of hands at the demo", "YES if more than half the room raises a hand when asked at this market's close time. Demo only.", 600);

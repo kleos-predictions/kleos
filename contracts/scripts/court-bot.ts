@@ -3,7 +3,7 @@
 // No juror automatically sits out: a three-seat jury needs all three possible reveals.
 import { network } from "hardhat";
 import { randomBytes } from "node:crypto";
-import { type Address, type Hex, zeroHash } from "viem";
+import { encodeAbiParameters, keccak256, type Address, type Hex, zeroHash } from "viem";
 import { LOCAL_CHAIN_ID, ROLES, getDemoWallets } from "./demo-wallets.ts";
 import { DemoJournal, acquireJournalLock, boundedInteger, contextId, selectDemoJurors } from "./demo-journal.ts";
 import { demoDeployment } from "./demo-deployment.ts";
@@ -16,12 +16,24 @@ const pollMs = boundedInteger(process.env.KLEOS_BOT_POLL_MS, 3000, 60_000, "KLEO
 const { viem } = await network.getOrCreate();
 const publicClient = await viem.getPublicClient();
 const chainId = await publicClient.getChainId();
+const requestedMarket = process.env.KLEOS_MARKET;
+if (requestedMarket !== undefined && !/^[1-9]\d*$/.test(requestedMarket)) {
+  throw new Error("KLEOS_MARKET must be an explicit positive decimal market ID.");
+}
+const marketId = requestedMarket === undefined ? undefined : BigInt(requestedMarket);
+if (marketId !== undefined && marketId >= 2n ** 256n) throw new Error("KLEOS_MARKET is outside the contract's uint256 range.");
+if (chainId !== LOCAL_CHAIN_ID && marketId === undefined) {
+  throw new Error("Set KLEOS_MARKET to the one approved market before running the court bot on a non-local chain.");
+}
 const { deployed, context } = await demoDeployment(publicClient, chainId);
+const kleos = await viem.getContractAt("Kleos", deployed["KleosModule#Kleos"] as Address);
+if (marketId !== undefined && marketId > await kleos.read.marketCount()) {
+  throw new Error(`KLEOS_MARKET ${marketId} does not exist on chain ${chainId}.`);
+}
 const journalPath = `.demo-state/court-${contextId(context)}.json`;
 const release = acquireJournalLock(`.demo-state/operator-${contextId(context)}.json`);
 try {
   const journal = new DemoJournal(journalPath, { deployment: context, plan: "court-v2" });
-  const kleos = await viem.getContractAt("Kleos", deployed["KleosModule#Kleos"] as Address);
   const [operator] = await viem.getWalletClients();
   const wallets = await getDemoWallets(viem, chainId);
   const jurors = new Map(wallets.slice(...ROLES.jurors).map((wallet) => [wallet.account.address.toLowerCase(), wallet]));
@@ -41,9 +53,16 @@ try {
     if (mode === "ambiguous") return 3;
     return (mode === "uphold" ? proposed : !proposed) ? 1 : 2;
   }
+  // Match Solidity abi.encode locally: the hidden vote and salt must never enter an RPC read.
+  function voteCommitment(id: bigint, round: number, juror: Address, vote: number, salt: Hex): Hex {
+    return keccak256(encodeAbiParameters(
+      [{ type: "uint256" }, { type: "uint8" }, { type: "address" }, { type: "uint8" }, { type: "bytes32" }],
+      [id, round, juror, vote, salt],
+    ));
+  }
   type SavedVote = { vote: number; salt: Hex; commitment: Hex };
   let cursor = 1n;
-  console.log(`Court bot watching ${jurors.size} demo jurors (vote: ${mode}; max ${scanBudget} markets / ${writeBudget} writes per poll).`);
+  console.log(`Court bot watching ${marketId === undefined ? "all local markets" : `market ${marketId}`} with ${jurors.size} demo jurors (vote: ${mode}; max ${scanBudget} markets / ${writeBudget} writes per poll).`);
   while (!stopped) {
     let writes = 0;
     const send = async (key: string, sender: Address, action: () => Promise<Hex>) => {
@@ -55,8 +74,9 @@ try {
     try {
       // Mining an empty local block avoids a signed self-transfer nonce/funding dependency.
       if (chainId === LOCAL_CHAIN_ID) await publicClient.request({ method: "evm_mine" as never });
-      const count = await kleos.read.marketCount();
-      if (cursor > count || cursor < 1n) cursor = 1n;
+      const count = marketId ?? await kleos.read.marketCount();
+      if (marketId !== undefined) cursor = marketId;
+      else if (cursor > count || cursor < 1n) cursor = 1n;
       const end = cursor + BigInt(scanBudget) - 1n > count ? count : cursor + BigInt(scanBudget) - 1n;
       for (let id = cursor; id <= end && !stopped; id++) {
         try {
@@ -78,7 +98,7 @@ try {
               if (!saved) {
                 const vote = voteFor(market.proposedOutcome);
                 const salt = `0x${randomBytes(32).toString("hex")}` as Hex;
-                const commitment = await kleos.read.voteCommitment([id, court.round, address, vote, salt]);
+                const commitment = voteCommitment(id, court.round, address, vote, salt);
                 saved = { vote, salt, commitment };
                 journal.setValue(voteKey, saved); // durable before broadcasting the hidden vote
               }
