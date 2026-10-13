@@ -334,6 +334,36 @@ export function sampleCalls(marketId: number): Call[] {
   });
 }
 
+/** One trader's stake in one market, both sides summed, with where the market stands for them. */
+export type Holding = {
+  marketId: number;
+  question: string;
+  yes: number; // kUSD on YES
+  no: number; // kUSD on NO
+  status: "open" | "closed" | "resolving" | "won" | "lost" | "refunded";
+  payout?: number; // kUSD paid at settlement, once settled
+};
+
+/** Where a market stands for someone holding `yes` / `no`. Mirrors the contract's states. */
+export function holdingStatus(m: { state: number; outcome: boolean; voided: boolean; closeMs: number }, yes: number, no: number): Holding["status"] {
+  if (m.voided) return "refunded";
+  if (m.state === 3) return (m.outcome ? yes : no) > 0 ? "won" : "lost";
+  if (m.state === 1 || m.state === 2) return "resolving";
+  return Date.now() >= m.closeMs ? "closed" : "open";
+}
+
+/** Sample holdings for demo mode, from a trader's sample calls. */
+export function sampleHoldings(user: string): Holding[] {
+  const byMarket = new Map<number, Holding>();
+  for (const c of sampleFeed(user)) {
+    const h = byMarket.get(c.marketId) ?? { marketId: c.marketId, question: c.question, yes: 0, no: 0, status: "open" as const };
+    if (c.side) h.yes += c.amount;
+    else h.no += c.amount;
+    byMarket.set(c.marketId, h);
+  }
+  return [...byMarket.values()];
+}
+
 export type FeedItem = Call & {
   marketId: number;
   question: string;

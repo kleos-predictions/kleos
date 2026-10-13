@@ -7,7 +7,7 @@ import { kleosAbi } from "./abi";
 import { HAS_LOGS_RPC, KLEOS_ADDRESS, SOCIAL_ADDRESS, logsClient, publicClient } from "./chain";
 import { HAS_HYPERSYNC, hypersyncEvents } from "./hypersync";
 import { kleosSocialAbi } from "./abi";
-import { liveStatus, type Call, type FeedItem, type Market, type RepChange } from "./data";
+import { holdingStatus, liveStatus, type Call, type FeedItem, type Holding, type Market, type RepChange } from "./data";
 
 const WAD = 1e18;
 const DEPLOY_BLOCK = BigInt(process.env.NEXT_PUBLIC_KLEOS_DEPLOY_BLOCK ?? "0");
@@ -255,4 +255,32 @@ export async function readExtraMarkets(fromId: number): Promise<Market[]> {
   const count = Number(await publicClient.readContract({ address: KLEOS_ADDRESS!, abi: kleosAbi, functionName: "marketCount" }));
   const ids = Array.from({ length: Math.max(0, count - fromId + 1) }, (_, i) => fromId + i);
   return (await Promise.all(ids.map(readLiveMarket))).filter((m): m is Market => m !== null);
+}
+
+/** Every market `user` holds a position in, read straight from the contract (the indexer's fallback). */
+export async function readHoldings(user: Address): Promise<Holding[]> {
+  await connection();
+  const count = Number(await publicClient.readContract({ address: KLEOS_ADDRESS!, abi: kleosAbi, functionName: "marketCount" }));
+  const ids = Array.from({ length: count }, (_, i) => BigInt(i + 1));
+  const held = await Promise.all(
+    ids.map((id) => publicClient.readContract({ address: KLEOS_ADDRESS!, abi: kleosAbi, functionName: "hasBet", args: [id, user] })),
+  );
+  const mine = ids.filter((_, i) => held[i]);
+  const rows = await Promise.all(
+    mine.map((id) =>
+      Promise.all([
+        publicClient.readContract({ address: KLEOS_ADDRESS!, abi: kleosAbi, functionName: "getMarket", args: [id] }),
+        publicClient.readContract({ address: KLEOS_ADDRESS!, abi: kleosAbi, functionName: "positions", args: [id, user, true] }),
+        publicClient.readContract({ address: KLEOS_ADDRESS!, abi: kleosAbi, functionName: "positions", args: [id, user, false] }),
+      ]),
+    ),
+  );
+  return rows
+    .map(([m, yesPos, noPos], i): Holding => {
+      const yes = Number(yesPos[0]) / 1e6;
+      const no = Number(noPos[0]) / 1e6;
+      const status = holdingStatus({ state: m.state, outcome: m.outcome, voided: m.voided, closeMs: Number(m.closeTime) * 1000 }, yes, no);
+      return { marketId: Number(mine[i]), question: m.question, yes, no, status };
+    })
+    .reverse(); // newest market first
 }

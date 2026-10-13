@@ -11,7 +11,7 @@ import { connection } from "next/server";
 import type { Address } from "viem";
 import { kleosAbi } from "./abi";
 import { IS_LIVE, IS_LOCAL_CHAIN, KLEOS_ADDRESS, publicClient } from "./chain";
-import { liveStatus, type Bet, type Call, type Category, type FeedItem, type Market, type RepChange, type Trader } from "./data";
+import { holdingStatus, liveStatus, type Bet, type Call, type Category, type FeedItem, type Holding, type Market, type RepChange, type Trader } from "./data";
 import type { LiveProfile } from "./onchain";
 
 const URL = process.env.INDEXER_URL;
@@ -267,17 +267,29 @@ type ChangeRow = {
  * contract: they must be exact, and seeds set resolvedBets without an event, so the index can't
  * know it. The name, wins, losses, reputation history and calls come from the indexer.
  */
-export async function readProfilePage(user: Address): Promise<{ profile: LiveProfile; calls: FeedItem[] }> {
+type PositionRow = {
+  yesMoney: string;
+  noMoney: string;
+  settled: boolean;
+  payout: string;
+  market: { id: string; question: string; state: "Open" | "Proposed" | "Disputed" | "Resolved"; outcome: boolean | null; voided: boolean; closeTime: string };
+};
+const STATES = { Open: 0, Proposed: 1, Disputed: 2, Resolved: 3 } as const;
+
+export async function readProfilePage(user: Address): Promise<{ profile: LiveProfile; calls: FeedItem[]; holdings: Holding[] }> {
   const id = user.toLowerCase();
   const [rep, data] = await Promise.all([
     publicClient.readContract({ address: KLEOS_ADDRESS!, abi: kleosAbi, functionName: "reputation", args: [user] }),
-    query<{ Trader: { name: string | null; wins: number; losses: number }[]; ReputationChange: ChangeRow[]; Call: CallRow[] }>(
+    query<{ Trader: { name: string | null; wins: number; losses: number }[]; ReputationChange: ChangeRow[]; Call: CallRow[]; Position: PositionRow[] }>(
       `query ($id: String!) {
         Trader(where: { id: { _eq: $id } }) { name wins losses }
         ReputationChange(where: { trader_id: { _eq: $id } }, order_by: [{ timestamp: desc }, { id: desc }], limit: ${HISTORY_LIMIT}) {
           kind delta newR entryPrice side outcome timestamp txHash market { id question }
         }
         Call(where: { trader_id: { _eq: $id } }, order_by: [{ timestamp: desc }, { id: desc }], limit: 50) { ${CALL_FIELDS} }
+        Position(where: { trader_id: { _eq: $id } }, order_by: { market_id: desc }, limit: 100) {
+          yesMoney noMoney settled payout market { id question state outcome voided closeTime }
+        }
       }`,
       { id },
       TTL.page,
@@ -317,5 +329,12 @@ export async function readProfilePage(user: Address): Promise<{ profile: LivePro
       historyError: false,
     },
     calls: data.Call.map((c) => toFeedItem(c, t)),
+    holdings: data.Position.map((p): Holding => {
+      const yes = usd(p.yesMoney);
+      const no = usd(p.noMoney);
+      const m = p.market;
+      const status = holdingStatus({ state: STATES[m.state], outcome: m.outcome ?? false, voided: m.voided, closeMs: Number(m.closeTime) * 1000 }, yes, no);
+      return { marketId: Number(m.id), question: m.question, yes, no, status, ...(p.settled ? { payout: usd(p.payout) } : {}) };
+    }).sort((a, b) => b.marketId - a.marketId), // ids are strings in the index: sort numerically
   };
 }
