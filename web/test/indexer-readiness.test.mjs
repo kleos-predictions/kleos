@@ -25,6 +25,7 @@ function oldSchemaHarness() {
       }),
     },
     "./onchain": {},
+    "./data": {},
   };
   const source = readFileSync(new URL("../src/lib/indexer.ts", import.meta.url), "utf8");
   const output = ts.transpileModule(source, {

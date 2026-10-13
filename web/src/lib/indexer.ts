@@ -6,7 +6,7 @@ import { connection } from "next/server";
 import type { Address } from "viem";
 import { kleosAbi, kleosSocialAbi } from "./abi";
 import { IS_LIVE, IS_LOCAL_CHAIN, KLEOS_ADDRESS, SOCIAL_ADDRESS, chain, publicClient } from "./chain";
-import type { Bet, Call, FeedItem, Market, RepChange, Trader } from "./data";
+import { holdingStatus, type Bet, type Call, type FeedItem, type Holding, type Market, type RepChange, type Trader } from "./data";
 import { readExtraMarkets, readLiveMarket, readNames, readProfileSnapshot, type LiveProfile } from "./onchain";
 
 const URL = process.env.INDEXER_URL;
@@ -254,16 +254,51 @@ export async function readLeaderboard(limit = 50): Promise<{ traders: (Trader & 
   return { traders: traders.slice(0, limit), asOfBlock: block.toString(), coverage: `Up to ${MAX_CANDIDATES} highest indexed-R participants, checked against the chain at this block. Counts cover indexed reputation-scored side results. Index coverage may omit participants.` };
 }
 
+type PositionRow = { market_id: string; yesMoney: string; noMoney: string; settled: boolean; payout: string };
+async function holdingsAt(rows: PositionRow[], user: Address, blockNumber: bigint): Promise<Holding[]> {
+  if (rows.length > 100) throw new Error("Holdings exceed the indexed profile read budget.");
+  const ids = rows.map(row => {
+    const id = Number(integer(row.market_id, "holding market id"));
+    if (!Number.isSafeInteger(id) || id < 1) throw new Error("Indexed holding market id is unsupported.");
+    return id;
+  });
+  if (new Set(ids).size !== ids.length) throw new Error("Indexed holdings contain duplicate markets.");
+  const deadline = Date.now() + TIMEOUT_MS;
+  const k = { address: KLEOS_ADDRESS!, abi: kleosAbi, blockNumber } as const;
+  const holdings: Holding[] = [];
+  for (let i = 0; i < rows.length; i += 4) {
+    holdings.push(...await withinBudget(Promise.all(rows.slice(i, i + 4).map(async (row, offset) => {
+      const id = BigInt(ids[i + offset]);
+      const [m, yesPos, noPos, settled] = await Promise.all([
+        publicClient.readContract({ ...k, functionName: "getMarket", args: [id] }),
+        publicClient.readContract({ ...k, functionName: "positions", args: [id, user, true] }),
+        publicClient.readContract({ ...k, functionName: "positions", args: [id, user, false] }),
+        publicClient.readContract({ ...k, functionName: "settled", args: [id, user] }),
+      ]);
+      if (yesPos[0] + noPos[0] === 0n || integer(row.yesMoney, "YES holding") !== yesPos[0] ||
+          integer(row.noMoney, "NO holding") !== noPos[0] || row.settled !== settled) {
+        throw new Error("Indexed holding does not match its chain checkpoint.");
+      }
+      const yes = Number(yesPos[0]) / 1e6, no = Number(noPos[0]) / 1e6;
+      return { marketId: Number(id), question: m.question, yes, no,
+        status: holdingStatus({ state: m.state, outcome: m.outcome, voided: m.voided, closeMs: Number(m.closeTime) * 1000 }, yes, no),
+        ...(settled ? { payout: Number(integer(row.payout, "holding payout")) / 1e6 } : {}) };
+    })), deadline));
+  }
+  return holdings.sort((a, b) => b.marketId - a.marketId);
+}
+
 type ChangeRow = EventRow & { kind: "Bet" | "Jury" | "Admin"; adminAction: "Seed" | "Slash" | "Unknown" | null; delta: string; newR: string; entryPrice: string; side: boolean; outcome: boolean; market: { id: string; question: string } | null };
 type VestRow = EventRow & { amount: string; newR: string };
-export async function readProfilePage(user: Address): Promise<{ profile: LiveProfile; calls: FeedItem[] }> {
-  const { data, block } = await query<{ Trader: { r: string; wins: number; losses: number; resolvedBets: string | null; resolvedBetsSource: string }[]; ReputationChange: ChangeRow[]; Vesting: VestRow[]; Call: CallRow[] }>(`
+export async function readProfilePage(user: Address): Promise<{ profile: LiveProfile; calls: FeedItem[]; holdings: Holding[] }> {
+  const { data, block } = await query<{ Trader: { r: string; wins: number; losses: number; resolvedBets: string | null; resolvedBetsSource: string }[]; ReputationChange: ChangeRow[]; Vesting: VestRow[]; Call: CallRow[]; Position: PositionRow[] }>(`
     Trader(where: { id: { _eq: $id } }, limit: 1) { r wins losses resolvedBets resolvedBetsSource }
     ReputationChange(where: { trader_id: { _eq: $id } }, order_by: ${ORDER}, limit: ${HISTORY_LIMIT + 1}) {
       kind adminAction delta newR entryPrice side outcome timestamp txHash blockNumber logIndex contractAddress market { id question }
     }
     Vesting(where: { trader_id: { _eq: $id } }, order_by: ${ORDER}, limit: ${HISTORY_LIMIT + 1}) { amount newR timestamp txHash blockNumber logIndex contractAddress }
-    Call(where: { trader_id: { _eq: $id } }, order_by: ${ORDER}, limit: 50) { ${CALL_FIELDS} }`, { id: user.toLowerCase() }, TTL.page, "$id: String!");
+    Call(where: { trader_id: { _eq: $id } }, order_by: ${ORDER}, limit: 50) { ${CALL_FIELDS} }
+    Position(where: { trader_id: { _eq: $id } }, limit: 101) { market_id yesMoney noMoney settled payout }`, { id: user.toLowerCase() }, TTL.page, "$id: String!");
   const deadline = Date.now() + TIMEOUT_MS;
   const snapshot = await withinBudget(readProfileSnapshot(user, block), deadline);
   const indexedTrader = data.Trader[0];
@@ -289,5 +324,5 @@ export async function readProfilePage(user: Address): Promise<{ profile: LivePro
   return { profile: { ...snapshot, name: names.get(user.toLowerCase()), wins: trader ? boundedCount(trader.wins, "wins") : 0, losses: trader ? boundedCount(trader.losses, "losses") : 0,
     history, historyError: false, historyComplete: complete,
     historyCoverage: `Indexed through block ${block}; latest ${HISTORY_LIMIT} reputation adjustments and ${HISTORY_LIMIT} vest events${complete ? "" : " · earlier changes omitted"}. Current activation count is read directly from the contract.` },
-    calls: await callsAt(data.Call, block) };
+    calls: await callsAt(data.Call, block), holdings: await holdingsAt(data.Position, user, block) };
 }

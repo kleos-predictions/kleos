@@ -357,30 +357,33 @@ export async function readLeaderboard(limit = 50): Promise<{ traders: (Trader & 
   return { traders: traders.slice(0, limit), asOfBlock: blockNumber.toString(), coverage: "Up to 100 most recently observed participants, ranked by current R. Counts cover observed settled side-results only." };
 }
 
-/** Every market `user` holds a position in, read straight from the contract (the indexer's fallback). */
-export async function readHoldings(user: Address): Promise<Holding[]> {
+/** Discover positions from a bounded contract snapshot, even when event history is unavailable. */
+export async function readHoldings(user: Address, atBlock?: bigint): Promise<Holding[]> {
   await connection();
-  const count = Number(await publicClient.readContract({ address: KLEOS_ADDRESS!, abi: kleosAbi, functionName: "marketCount" }));
-  const ids = Array.from({ length: count }, (_, i) => BigInt(i + 1));
-  const held = await Promise.all(
-    ids.map((id) => publicClient.readContract({ address: KLEOS_ADDRESS!, abi: kleosAbi, functionName: "hasBet", args: [id, user] })),
-  );
-  const mine = ids.filter((_, i) => held[i]);
-  const rows = await Promise.all(
-    mine.map((id) =>
-      Promise.all([
-        publicClient.readContract({ address: KLEOS_ADDRESS!, abi: kleosAbi, functionName: "getMarket", args: [id] }),
-        publicClient.readContract({ address: KLEOS_ADDRESS!, abi: kleosAbi, functionName: "positions", args: [id, user, true] }),
-        publicClient.readContract({ address: KLEOS_ADDRESS!, abi: kleosAbi, functionName: "positions", args: [id, user, false] }),
-      ]),
-    ),
-  );
-  return rows
-    .map(([m, yesPos, noPos], i): Holding => {
-      const yes = Number(yesPos[0]) / 1e6;
-      const no = Number(noPos[0]) / 1e6;
-      const status = holdingStatus({ state: m.state, outcome: m.outcome, voided: m.voided, closeMs: Number(m.closeTime) * 1000 }, yes, no);
-      return { marketId: Number(mine[i]), question: m.question, yes, no, status };
-    })
-    .reverse(); // newest market first
+  const deadline = Date.now() + READ_BUDGET_MS;
+  const blockNumber = atBlock ?? await withinBudget(publicClient.getBlockNumber(), deadline);
+  const k = { address: KLEOS_ADDRESS!, abi: kleosAbi, blockNumber } as const;
+  const count = await withinBudget(publicClient.readContract({ ...k, functionName: "marketCount" }), deadline);
+  if (count > 1_000n) throw new Error("Holdings discovery exceeds its market read budget. Use the indexer.");
+  const mine: bigint[] = [];
+  for (let end = count; end > 0n; end -= 4n) {
+    const ids = Array.from({ length: Number(end < 4n ? end : 4n) }, (_, i) => end - BigInt(i));
+    const held = await withinBudget(Promise.all(ids.map(id => publicClient.readContract({ ...k, functionName: "hasBet", args: [id, user] }))), deadline);
+    mine.push(...ids.filter((_, i) => held[i]));
+    if (mine.length > 100) throw new Error("Holdings exceed the profile read budget.");
+  }
+  const holdings: Holding[] = [];
+  for (let i = 0; i < mine.length; i += 4) {
+    holdings.push(...await withinBudget(Promise.all(mine.slice(i, i + 4).map(async id => {
+      const [m, yesPos, noPos] = await Promise.all([
+        publicClient.readContract({ ...k, functionName: "getMarket", args: [id] }),
+        publicClient.readContract({ ...k, functionName: "positions", args: [id, user, true] }),
+        publicClient.readContract({ ...k, functionName: "positions", args: [id, user, false] }),
+      ]);
+      const yes = Number(yesPos[0]) / 1e6, no = Number(noPos[0]) / 1e6;
+      return { marketId: Number(id), question: m.question, yes, no,
+        status: holdingStatus({ state: m.state, outcome: m.outcome, voided: m.voided, closeMs: Number(m.closeTime) * 1000 }, yes, no) };
+    })), deadline));
+  }
+  return holdings;
 }

@@ -11,11 +11,23 @@ const snapshot={r:16,rawR:(16n*wad).toString(),pending:0,resolvedBets:10,flagged
 const market={id:1,question:"Actual chain question",history:[],sharps:{yes:0,no:0},live:{block:"100",chainId:10143,contract:K,state:3,voided:false,outcome:true,sharpsAvailable:false,yesMoney:"1000000",noMoney:"0",yesEff:"3000000",noEff:"0"}};
 const call={...event,id:"1",side:true,amount:"1000000",entryPrice:(wad/2n).toString(),text:"Indexed call",market:{id:"1"},trader:{id:A}};
 const marketRow={id:"1",yesMoney:"1000000",noMoney:"0",yesEff:"3000000",noEff:"0",betCount:1,sharpYes:1,sharpNo:0,pricePoints:[{blockNumber:100,logIndex:1,priceRepYes:wad.toString(),priceMoneyYes:wad.toString()}]};
+const dataModule={exports:{}};
+const dataSource=ts.transpileModule(readFileSync(new URL("../src/lib/data.ts",import.meta.url),"utf8"),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2020}}).outputText;
+const unexpected=()=>{throw new Error("Unexpected fixture dependency");};
+runInNewContext(dataSource,{module:dataModule,exports:dataModule.exports,Date,require:name=>{
+ if(name==="./math")return{multiplier:unexpected,reputationDelta:unexpected};
+ if(name==="./tiers")return{tierOf:unexpected};
+ throw new Error(name);
+}});
 function harness(options={}){
  const requests=[], reads=[], warnings=[]; let cancellations=0, released=0;
- const data={_meta:[{chainId:10143,startBlock:1,progressBlock:100,progressBlockTime:new Date(now*1000).toISOString(),isReady:true}],ContractConfiguration:[{id:K,source:"DirectCreation",nMin:"10",vestPeriod:"300"}],Market:[marketRow],Bet:[],Call:[call],Trader:[{id:A,r:snapshot.rawR,wins:2,losses:1,resolvedBets:null,resolvedBetsSource:"Unknown"}],ReputationChange:[],Vesting:[],...options.data};
- const client={getBlockNumber:async()=>options.head??100n,getBlock:async p=>{reads.push(p);return{timestamp:BigInt(options.time??now)};},readContract:async p=>{reads.push(p);if(p.functionName==="N_MIN")return 10n;if(p.functionName==="VEST_PERIOD")return 300n;if(p.functionName==="following")return options.following??[A];return{r:16n*wad};}};
- const stubs={"server-only":{},"next/server":{connection:async()=>{}},"./abi":{kleosAbi:[],kleosSocialAbi:[]},"./chain":{IS_LIVE:true,IS_LOCAL_CHAIN:false,KLEOS_ADDRESS:K,SOCIAL_ADDRESS:K,chain:{id:10143},publicClient:client},"./onchain":{
+ const data={_meta:[{chainId:10143,startBlock:1,progressBlock:100,progressBlockTime:new Date(now*1000).toISOString(),isReady:true}],ContractConfiguration:[{id:K,source:"DirectCreation",nMin:"10",vestPeriod:"300"}],Market:[marketRow],Bet:[],Position:[],Call:[call],Trader:[{id:A,r:snapshot.rawR,wins:2,losses:1,resolvedBets:null,resolvedBetsSource:"Unknown"}],ReputationChange:[],Vesting:[],...options.data};
+ const client={getBlockNumber:async()=>options.head??100n,getBlock:async p=>{reads.push(p);return{timestamp:BigInt(options.time??now)};},readContract:async p=>{reads.push(p);if(p.functionName==="N_MIN")return 10n;if(p.functionName==="VEST_PERIOD")return 300n;if(p.functionName==="following")return options.following??[A];
+ if(p.functionName==="getMarket")return{question:`Actual chain market ${p.args[0]}`,state:3,outcome:true,voided:false,closeTime:BigInt(now-10)};
+ if(p.functionName==="positions")return[options.positionMoney??(p.args[2]?1_000_000n:0n),0n,0n,false];
+ if(p.functionName==="settled")return options.settled??true;
+ return{r:16n*wad};}};
+ const stubs={"./data":dataModule.exports,"server-only":{},"next/server":{connection:async()=>{}},"./abi":{kleosAbi:[],kleosSocialAbi:[]},"./chain":{IS_LIVE:true,IS_LOCAL_CHAIN:false,KLEOS_ADDRESS:K,SOCIAL_ADDRESS:K,chain:{id:10143},publicClient:client},"./onchain":{
   readExtraMarkets:async(_from,_limit,block)=>{reads.push({blockNumber:block});return[market];},
   readLiveMarket:async(_id,block)=>{reads.push({blockNumber:block});return market;},
   readNames:async(_addresses,block)=>{reads.push({blockNumber:block});return new Map([[A,"actual_name"]]);},
@@ -99,4 +111,32 @@ test("indexed Following filters before pagination and validates the complete bou
  const h=harness({data:{Follow:[{followee_id:A}]}});const rows=await h.readFilteredFeed({follower:A});assert.equal(rows.length,1);assert.match(h.requests[0].query,/followers:.*follower_id/);assert.ok(h.reads.every(p=>p.blockNumber===100n));
  await assert.rejects(harness({data:{Follow:[]}}).readFilteredFeed({follower:A}),/follows do not match/);
  await assert.rejects(harness({following:Array(101).fill(A),data:{Follow:Array(101).fill({followee_id:A})}}).readFilteredFeed({follower:A}),/read budget/);
+});
+
+const position={market_id:"1",yesMoney:"1000000",noMoney:"0",settled:true,payout:"1500000"};
+test("profile holdings verify both positions and settlement at the checkpoint, with numeric newest-first ordering",async()=>{
+ const h=harness({data:{Position:[{...position,market_id:"2"},{...position,market_id:"10"}]}});
+ const {holdings}=await h.readProfilePage(A);
+ assert.deepEqual(Array.from(holdings,row=>({...row})),[
+  {marketId:10,question:"Actual chain market 10",yes:1,no:0,status:"won",payout:1.5},
+  {marketId:2,question:"Actual chain market 2",yes:1,no:0,status:"won",payout:1.5},
+ ]);
+ assert.ok(h.reads.every(read=>read.blockNumber===100n));
+ assert.equal(h.reads.filter(read=>read.functionName==="positions").length,4);
+ assert.match(h.requests[0].query,/Position\(where:.*trader_id:.*limit: 101/);
+});
+test("profile holdings reject mismatched stakes or settlement instead of displaying stale amounts",async()=>{
+ await assert.rejects(harness({data:{Position:[{...position,yesMoney:"2000000"}]}}).readProfilePage(A),/holding does not match/);
+ await assert.rejects(harness({settled:false,data:{Position:[position]}}).readProfilePage(A),/holding does not match/);
+ const {holdings}=await harness({settled:false,data:{Position:[{...position,settled:false}]}}).readProfilePage(A);
+ assert.equal(holdings[0].payout,undefined);
+});
+test("profile holdings reject over-budget results before reading positions",async()=>{
+ const h=harness({data:{Position:Array.from({length:101},(_,i)=>({...position,market_id:String(i+1)}))}});
+ await assert.rejects(h.readProfilePage(A),/indexed profile read budget/);
+ assert.equal(h.reads.filter(read=>read.functionName==="positions").length,0);
+});
+test("profile holdings reject duplicate and unsupported market identifiers",async()=>{
+ await assert.rejects(harness({data:{Position:[position,position]}}).readProfilePage(A),/duplicate markets/);
+ await assert.rejects(harness({data:{Position:[{...position,market_id:"9007199254740992"}]}}).readProfilePage(A),/market id is unsupported/);
 });
