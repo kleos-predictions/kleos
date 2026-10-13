@@ -45,3 +45,12 @@ npm --prefix web run build       # web type-check and build
 ## Writing
 
 User-facing copy and docs: short, plain sentences, no hype. Figures on the compare page need a source (`web/src/lib/cases.ts`).
+
+## Design
+
+Anything visual an agent makes (report pages, artifacts, decks, diagrams, screenshots for PRs) follows the product's design system in `web/src/app/globals.css`, so the team's material looks like Kleos:
+
+- **Dark only.** Ground `#0d0c0b`, cards `#161413` / `#1d1b19`, lines `#2a2724` / `#3a3531`, ink `#f3efe9`, muted `#9a948c`, faint `#6b645d`.
+- **Two meanings of color.** Accent `#ff5a36` (hover `#ff7a5c`) is reputation and YES; lavender `#9d97f5` (dim `#5e5a96`) is money and NO. Don't use them decoratively.
+- **Type.** Doto 900 for display (sparingly: headings and big numbers), Space Grotesk 400/500/700 for text, IBM Plex Mono 400/500 for labels and data. Labels are 12px mono, uppercase, `0.08em` tracking, muted.
+- **Shape.** Cards have an 18px radius and a 1px line border; buttons have a 12px radius. The dot-matrix laurel (`web/src/components/laurel.tsx`) is the mark.
