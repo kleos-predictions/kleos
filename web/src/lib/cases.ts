@@ -27,7 +27,7 @@ export const CASES: Case[] = [
     happened:
       "“Will Zelensky wear a suit before July?” At the June 24 NATO summit he wore a black blazer, collared shirt and suit trousers; many outlets called it a suit.",
     decided:
-      "First resolved “Yes”. After challenges it went to a UMA token-holder vote, which ruled “No” on July 1, citing a lack of “credible reporting consensus”.",
+      "First resolved “Yes”. After challenges it went to a UMA token-holder vote, which ruled “No” on July 1, citing a lack of consensus in credible reporting.",
     kleos:
       "A dispute goes to the Kleos Court: up to 5 eligible juror addresses with no position, voting in secret. They can rule AMBIGUOUS, which voids the market and refunds everyone instead of forcing a winner.",
     mechanisms: ["Kleos Court", "No-stake jurors", "AMBIGUOUS → refund"],
@@ -64,7 +64,7 @@ export const CASES: Case[] = [
     date: "Jan 2026",
     volume: "More than $10.5M on invasion-related contracts",
     happened:
-      "After the operation that captured Maduro, Polymarket ruled it was not an “invasion” and would only resolve if the US took control of Venezuelan territory. Traders accused it of changing the rules after the fact.",
+      "After the operation that captured Maduro, Polymarket ruled it was not an “invasion” and would only resolve “Yes” for a military offensive intended to establish control over Venezuelan territory. Traders accused it of changing the rules after the fact.",
     decided: "A platform clarification of its own rules.",
     kleos:
       "Resolution criteria are written at creation, stored on-chain and shown before you bet. The text can't be edited afterward, and proposals and disputes are judged against it.",
@@ -102,11 +102,11 @@ export const CASES: Case[] = [
     title: "Khamenei “out as Supreme Leader?”",
     platform: "Kalshi",
     date: "Feb–Mar 2026",
-    volume: "More than $54M",
+    volume: "More than $50M",
     happened:
-      "After Khamenei was killed, Kalshi did not pay “Yes”. It settled at the last traded price before his death, citing a rule against profiting from death. A similar Polymarket market resolved “Yes”.",
+      "After Khamenei was killed, Kalshi did not pay “Yes”. It settled at the last traded price before his death, citing a rule against profiting from death.",
     decided:
-      "The exchange rulebook, through a carve-out many traders say they hadn't seen. A class action followed, and Kalshi refunded, plus fees, at a cost of $2.2M.",
+      "The exchange rulebook, through a carve-out many traders say they hadn't seen. Kalshi said it would reimburse all fees and fully refund anyone who bet after the death. A class action followed.",
     kleos:
       "Every resolution rule, including exceptions, is stored on-chain with the market and shown on the bet screen before you confirm.",
     mechanisms: ["Criteria on-chain", "Shown before you bet"],

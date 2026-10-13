@@ -70,10 +70,10 @@ const FAILURES = [
     live: true,
   },
   {
-    title: "Price distortion",
+    title: "Whale concentration",
     date: "Oct 2024",
-    what: "A study examines large linked-wallet activity and prediction-market price differences. Such differences alone do not establish manipulation or a correct alternative probability.",
-    source: "https://papers.ssrn.com/sol3/papers.cfm?abstract_id=6670638",
+    what: "One trader spread more than $45 million of Trump bets across several Polymarket accounts.",
+    source: "https://www.theblock.co/post/324996/polymarket-whale-us-election-profit-france-ban",
     answer: "A reputation-weighted pool share beside the money share. The prospective cap is path dependent and does not impose a permanent 10% limit.",
     live: true,
   },

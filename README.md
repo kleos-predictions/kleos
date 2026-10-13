@@ -4,9 +4,19 @@ A parimutuel prediction-market prototype with public calls and an experimental r
 
 Each market shows money and reputation-weighted pool shares. Principal payout depends on final money pools. Reputation also affects signal weight and bonus allocation; it is not yet a validated measure of independent forecasting skill.
 
+<img width="3000" height="1000" alt="Kleos: your track record is worth more than their bankroll" src="https://github.com/user-attachments/assets/3f0683aa-7e7a-4590-9c67-e028b576fd30" />
+
+**[Live app](https://kleos-iota.vercel.app)** · **Demo video** _(link soon)_ · **Pitch deck** _(link soon)_
+
+| Contract (Monad testnet, chain 10143) | Address |
+|---|---|
+| Kleos (markets, reputation, Kleos Court) | [`0xd68a1F212fa52663468BBB6F0456Cd6e7Ce854Cb`](https://testnet.monadscan.com/address/0xd68a1F212fa52663468BBB6F0456Cd6e7Ce854Cb) |
+| KleosSocial (usernames, follows, call votes) | [`0x766d184Fc25Fe88d30cF62dC9A391cBb2975B9aA`](https://testnet.monadscan.com/address/0x766d184Fc25Fe88d30cF62dC9A391cBb2975B9aA) |
+| KleosUSD (test stablecoin) | [`0x74cb7e5f0Ef6d1A32D3b9bb7b40495b61a45B750`](https://testnet.monadscan.com/address/0x74cb7e5f0Ef6d1A32D3b9bb7b40495b61a45B750) |
+
 ## Current status
 
-Security review is ongoing. Existing testnet contracts do not acquire source repairs automatically. This prototype is not ready for production or real funds.
+Known security findings remain unresolved. The contract fixes in this branch have not been deployed; existing testnet contracts remain unchanged. This prototype is not ready for production or real funds.
 
 The full local contract and operator suite currently has **113 passing tests** (60 contract tests and 53 operator tests). The web has 72 regression tests; the indexer has 36 simulations and one fresh actual local handler replay passing. Testnet integration and hosted GraphQL acceptance remain unexecuted. Tests do not certify commercial demand, physical passkey behavior or mechanism security.
 
@@ -54,6 +64,10 @@ Testnet deployment, signed actions and private-key use require the owner's expli
 The server-only `INDEXER_URL` enables the GraphQL adapter in `web/src/lib/indexer.ts`. The adapter validates processing checkpoints, chain/deployment configuration, freshness and exact/unknown field provenance before serving indexed data. The repaired schema still requires hosted replay and acceptance. Contract reads remain authoritative for actions. If indexed data is unavailable or incompatible, bounded contract/HyperSync reads provide the live fallback; missing live data is not replaced by samples.
 
 Changed schema and handlers require replay and hosted acceptance; a source adapter does not prove the current deployment uses it.
+
+## Team
+
+Daniela Zschaber ([@danimim](https://github.com/danimim)): product, contracts and web. Artur Pokusin ([@apokusin](https://github.com/apokusin)): Envio indexer and review.
 
 ## Repository and next decisions
 

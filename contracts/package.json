@@ -16,10 +16,12 @@
     "seed:local": "hardhat run scripts/seed-demo.ts --network localhost",
     "court-bot": "hardhat run scripts/court-bot.ts --network localhost",
     "dispute": "hardhat run scripts/dispute.ts --network localhost",
+    "demo-market": "hardhat run scripts/demo-market.ts --network localhost",
     "seed:monad": "hardhat run scripts/seed-demo.ts --network monadTestnet",
     "sponsor:monad": "hardhat run scripts/setup-sponsor.ts --network monadTestnet",
     "court-bot:monad": "hardhat run scripts/court-bot.ts --network monadTestnet",
-    "dispute:monad": "hardhat run scripts/dispute.ts --network monadTestnet"
+    "dispute:monad": "hardhat run scripts/dispute.ts --network monadTestnet",
+    "demo-market:monad": "hardhat run scripts/demo-market.ts --network monadTestnet"
   },
   "keywords": [],
   "author": "",
