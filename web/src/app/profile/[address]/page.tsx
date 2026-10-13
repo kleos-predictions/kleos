@@ -188,13 +188,13 @@ export default async function ProfilePage(props: PageProps<"/profile/[address]">
           )}
         </details>
         </div>
-        <aside className="flex flex-col gap-3 lg:sticky lg:top-6">
+        <aside className="flex flex-col gap-4 lg:sticky lg:top-6">
           <div className="flex items-baseline justify-between px-1">
-            <h2 className="font-dot text-[20px] font-black">MARKETS JOINED</h2>
+            <h2 className="font-dot text-[24px] font-black">MARKETS JOINED</h2>
             <span className="lbl">{holdings.length}</span>
           </div>
           {holdings.length === 0 ? (
-            <p className="card lbl p-6 text-center">No markets joined yet.</p>
+            <p className="card lbl p-8 text-center">No markets joined yet.</p>
           ) : (
             <ul className="card divide-y divide-line">
               {holdings.map((h) => (
